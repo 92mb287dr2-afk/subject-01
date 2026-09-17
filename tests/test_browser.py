@@ -44,6 +44,11 @@ def test_browser_world_graph_and_mobile(live_server):
         page.keyboard.press("Escape")
         page.select_option("#filter", "signal")
         page.wait_for_selector(".event.signal")
+        page.route("**/api/frames?**", lambda route: route.abort())
+        expect(page.locator("#connection")).to_have_text("НЕТ LIVE-СВЯЗИ")
+        page.unroute("**/api/frames?**")
+        expect(page.locator("#connection")).to_have_text("МИР АКТИВЕН")
+        expect(page.locator("#notice")).not_to_contain_text("Нет связи")
         os.makedirs("test-artifacts", exist_ok=True)
         page.screenshot(path="test-artifacts/observer-desktop.png", full_page=True)
         tick = runtime.core.tick_index

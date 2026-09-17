@@ -112,6 +112,7 @@ function renderEvents(){
   });$("events").append(frag);
 }
 function accept(data){
+  const recovering = !connected && !!state;
   if(session && session!==data.session){cursor=-1;pulses=[];eventsByType={created:[],weight:[],signal:[],all:[]};eventTotal=0;newTotal=0;notice("Сервер перезапущен. Восстановлено сохранённое состояние.",true);}
   session=data.session;cursor=data.cursor;state=data.snapshot;lastNetwork=performance.now();connected=data.running&&!data.error;
   const now=performance.now();
@@ -124,6 +125,7 @@ function accept(data){
   if(data.error)notice("Симуляция остановилась: "+data.error,true);
   else if(data.gap)notice("Пропущен участок онлайн-потока. Все записанные сигналы доступны в полном журнале.",true);
   else if(!data.running)notice("Мир остановлен. Отображается последнее состояние.",true);
+  else if(recovering)notice("Связь восстановлена. Снова показано актуальное состояние мира.");
   else if(!$("notice").classList.contains("warn"))notice("Прямые данные сети · все ненулевые передачи журналируются · это не биологические спайки");
   const b=state.body;$("energy").textContent=Math.round(b.energy*100)+"%";$("energyBar").value=b.energy;
   $("speed").textContent=Math.hypot(b.vx,b.vy).toFixed(2);$("objects").textContent=state.objects.length;
