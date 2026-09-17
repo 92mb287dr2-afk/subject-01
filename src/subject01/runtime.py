@@ -136,6 +136,6 @@ class SimulationRuntime:
                     )
             delay = deadline - time.monotonic()
             if delay > 0:
-                self._running.wait(delay)
+                time.sleep(delay)
             else:
                 deadline = time.monotonic()
