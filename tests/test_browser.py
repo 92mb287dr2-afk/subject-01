@@ -11,7 +11,7 @@ pytestmark = pytest.mark.skipif(os.environ.get("RUN_BROWSER") != "1",
 
 
 def test_browser_world_graph_and_mobile(live_server):
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import sync_playwright, expect
 
     runtime, server, url = live_server
     with sync_playwright() as p:
@@ -20,17 +20,16 @@ def test_browser_world_graph_and_mobile(live_server):
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.goto(url)
-        page.wait_for_function("document.querySelector('#connection').textContent === 'МИР АКТИВЕН'")
-        page.wait_for_function("Number(document.querySelector('#created').textContent) > 0",
-                               timeout=15000)
+        expect(page.locator("#connection")).to_have_text("МИР АКТИВЕН")
+        expect(page.locator("#created")).not_to_have_text("0", timeout=15000)
         assert page.evaluate("state.brain.nodes.length") == 32
         assert page.evaluate("state.brain.edges.length") > 56
         before = page.evaluate("state.objects.length")
         page.locator("#add").click()
         page.locator("#world").click(position={"x": 130, "y": 140})
-        page.wait_for_function(f"state.objects.length === {before + 1}")
+        expect(page.locator("#objects")).to_have_text(str(before + 1))
         page.locator("#save").click()
-        page.wait_for_function("document.querySelector('#notice').textContent.includes('сохранено')")
+        expect(page.locator("#notice")).to_contain_text("сохранено")
         page.locator("#expand").click()
         assert "expanded" in page.locator("#brainPanel").get_attribute("class")
         page.locator("#zoomIn").click()
@@ -55,7 +54,7 @@ def test_browser_world_graph_and_mobile(live_server):
                                   device_scale_factor=2, is_mobile=True, has_touch=True)
         mobile.on("pageerror", lambda error: errors.append(str(error)))
         mobile.goto(url)
-        mobile.wait_for_function("document.querySelector('#connection').textContent === 'МИР АКТИВЕН'")
+        expect(mobile.locator("#connection")).to_have_text("МИР АКТИВЕН")
         assert mobile.evaluate("document.documentElement.scrollWidth <= innerWidth")
         mobile.screenshot(path="test-artifacts/observer-mobile.png", full_page=True)
         assert not errors
