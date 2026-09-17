@@ -14,6 +14,7 @@ dev = ["pytest>=8,<9"]
 
 [project.scripts]
 subject01 = "subject01.cli:main"
+subject01-observer = "subject01.observer:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -21,3 +22,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.setuptools.package-data]
+subject01 = ["web/*.html", "web/*.css", "web/*.js"]

@@ -67,6 +67,10 @@ class SimulationCore:
 
     def __init__(self, config: SimulationConfig | None = None) -> None:
         self.config = config or SimulationConfig()
+        if not all(math.isfinite(v) for v in (
+            self.config.dt, self.config.width, self.config.height, self.config.gravity_y
+        )):
+            raise ValueError("configuration must be finite")
         if self.config.dt <= 0:
             raise ValueError("dt must be positive")
         if self.config.width <= 0 or self.config.height <= 0:
@@ -86,6 +90,13 @@ class SimulationCore:
         if kind not in self.ALLOWED_COMMANDS:
             raise ValueError(f"unsupported intervention: {kind}")
         normalized = self._validate(kind, payload)
+        if any(isinstance(value, (int, float)) and not math.isfinite(value)
+               for value in normalized.values()):
+            raise ValueError("intervention numbers must be finite")
+        if kind == "spawn_object" and (
+            normalized["radius"] * 2 > min(self.config.width, self.config.height)
+        ):
+            raise ValueError("object is larger than the world")
         command = Intervention(
             event_id=self.next_event_id,
             kind=kind,

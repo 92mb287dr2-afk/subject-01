@@ -59,6 +59,8 @@ class SimulationRuntime:
         self.store = store
         self._lock = threading.RLock()
         self._running = threading.Event()
+        self._stop_requested = threading.Event()
+        self.fatal_error: str | None = None
         self._thread: threading.Thread | None = None
 
     @classmethod
@@ -74,15 +76,18 @@ class SimulationRuntime:
     def start(self) -> None:
         if self._running.is_set():
             return
+        self._stop_requested.clear()
+        self.fatal_error = None
         self._running.set()
         self._thread = threading.Thread(
-            target=self._run, name="subject01-world", daemon=False
+            target=self._guarded_run, name="subject01-world", daemon=False
         )
         self._thread.start()
         self.store.append("runtime_started", self.core.tick_index, {})
 
     def stop(self) -> None:
         self._running.clear()
+        self._stop_requested.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
             if self._thread.is_alive():
@@ -116,6 +121,17 @@ class SimulationRuntime:
                 {"state_hash": self.core.state_hash()},
             )
 
+    def _after_step(self, applied) -> None:
+        """Extension hook called under the state lock."""
+
+    def _guarded_run(self) -> None:
+        try:
+            self._run()
+        except Exception as exc:
+            self.fatal_error = f"{type(exc).__name__}: {exc}"
+        finally:
+            self._running.clear()
+
     def _run(self) -> None:
         deadline = time.monotonic()
         dt = self.core.config.dt
@@ -126,6 +142,7 @@ class SimulationRuntime:
                 current_tick = self.core.tick_index
                 for event in applied:
                     self.store.append("intervention_applied", current_tick, event)
+                self._after_step(applied)
                 interval = self.core.config.snapshot_interval_ticks
                 if interval > 0 and current_tick % interval == 0:
                     self.store.save_snapshot(self.core.state())
@@ -136,6 +153,6 @@ class SimulationRuntime:
                     )
             delay = deadline - time.monotonic()
             if delay > 0:
-                time.sleep(delay)
+                self._stop_requested.wait(delay)
             else:
                 deadline = time.monotonic()
