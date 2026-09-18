@@ -1,4 +1,4 @@
-# Architecture v0.1
+# Architecture — implemented foundation
 
 ```text
 Observer CLI
@@ -16,6 +16,18 @@ SimulationCore
     |-- world state
     +-- tick-boundary command application
 ```
+
+## Current scope and target design
+
+The diagram above describes the original foundation. The browser observer and
+diagnostic predictive network are described in [OBSERVER_DESIGN.md](OBSERVER_DESIGN.md).
+Neither is the formal birth of Subject-01.
+
+The accepted target is [docs/SUBJECT_CONTRACT.md](docs/SUBJECT_CONTRACT.md).
+It includes one continuing organism, an initially uninformed internal researcher,
+protected learned memory, recovery, and explicit observer exceptions.
+These target mechanisms are not implemented by the current snapshots or predictor.
+See [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) for the proposed birth gates.
 
 ## Independent responsibilities
 
