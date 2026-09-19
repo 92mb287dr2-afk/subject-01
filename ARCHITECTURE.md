@@ -26,7 +26,11 @@ Neither is the formal birth of Subject-01.
 The accepted target is [docs/SUBJECT_CONTRACT.md](docs/SUBJECT_CONTRACT.md).
 It includes one continuing organism, an initially uninformed internal researcher,
 protected learned memory, recovery, and explicit observer exceptions.
-These target mechanisms are not implemented by the current snapshots or predictor.
+The original snapshots/predictor do not implement these mechanisms. The new
+`--candidate` path uses `continuity.py`, `development.py`, `life.py`, and `candidate.py`.
+It adds atomic continuity, protected consolidation, numeric action models, shared
+arbitration, bounded body trials, and recovery. See [release status](docs/RELEASE_STATUS.md)
+for verified coverage and remaining gaps; the full target is not yet implemented.
 See [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) for the proposed birth gates.
 
 ## Independent responsibilities

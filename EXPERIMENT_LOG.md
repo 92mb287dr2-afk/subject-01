@@ -59,3 +59,12 @@ Added [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) with proposed verification gates 
 the first work package: durable continuity before researcher development.
 Technical implementation proposals are distinguished from accepted user choices.
 No organism was born; no runtime, brain, saved state or memory was changed.
+
+## 2026-09-19 — Durable development candidate
+
+Implemented isolated PRE-BIRTH candidate storage, body trials, numeric controllers,
+protected consolidation, recovery, and expanded observer UI. Formal birth remains closed.
+Initial local validation: 35 tests pass; browser tests await CI. Preregistered limited
+model experiments pass their mean-error thresholds, with per-seed results and scope
+in [docs/RELEASE_STATUS.md](docs/RELEASE_STATUS.md). Structural network development,
+complete observer edits, full-organism experiments, and long-duration budgets remain open.
