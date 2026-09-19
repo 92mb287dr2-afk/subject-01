@@ -1,0 +1,12 @@
+{
+  "protocol": "prebirth-model-evaluation-1",
+  "seeds": [23, 41, 97],
+  "embodied_train": 800,
+  "embodied_holdout": 200,
+  "embodied_max_mean_error_ratio_to_frozen": 0.85,
+  "method_train": 640,
+  "method_holdout": 160,
+  "method_max_mean_error_ratio_to_fixed": 0.9,
+  "method_task": "numeric action effects, piecewise changing sign every 80 samples; no task IDs supplied",
+  "scope": "isolated numeric learners and abstract planar body; not evidence of consciousness or open-ended evolution"
+}

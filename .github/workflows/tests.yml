@@ -9,7 +9,10 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -17,6 +20,7 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install -e ".[dev]"
       - run: pytest
+      - run: python experiments/evaluate.py
 
   browser:
     runs-on: ubuntu-latest
@@ -28,7 +32,7 @@ jobs:
       - run: python -m pip install -e ".[dev]" playwright
       - run: python -m playwright install --with-deps chromium
       - run: node --check src/subject01/web/app.js
-      - run: RUN_BROWSER=1 pytest tests/test_browser.py -v
+      - run: RUN_BROWSER=1 pytest tests/test_browser.py tests/test_candidate_http.py -v
       - uses: actions/upload-artifact@v4
         if: always()
         with:

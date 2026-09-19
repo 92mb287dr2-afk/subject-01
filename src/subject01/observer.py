@@ -9,6 +9,7 @@ from importlib.resources import files
 import json
 from pathlib import Path
 import secrets
+import sqlite3
 import threading
 import uuid
 from urllib.parse import parse_qs, urlparse
@@ -117,6 +118,13 @@ class ObserverHandler(BaseHTTPRequestHandler):
                 self._send(200, self.server.runtime.telemetry(after))
             elif parsed.path == "/api/session":
                 self._send(200, {"token": self.server.token})
+            elif parsed.path == "/api/state":
+                self._send(200, self.server.runtime.status())
+            elif parsed.path == "/api/journal" and hasattr(self.server.runtime.store, "journal"):
+                after = int(parse_qs(parsed.query).get("after", ["0"])[0])
+                with self.server.runtime._lock:
+                    batches = self.server.runtime.store.journal(after)
+                self._send(200, dict(batches=batches, cursor=batches[-1]["seq"] if batches else after))
             elif parsed.path == "/api/neural-log":
                 self._download_log()
             elif parsed.path in ("/", "/app.js", "/style.css"):
@@ -131,6 +139,29 @@ class ObserverHandler(BaseHTTPRequestHandler):
             self._send(400, {"error": str(exc)})
 
     def _download_log(self):
+        runtime = self.server.runtime
+        if hasattr(runtime.store, "journal"):
+            with runtime._lock:
+                last = runtime.store.db.execute("SELECT max(seq) FROM journal").fetchone()[0] or 0
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.send_header("Content-Disposition", 'attachment; filename="committed-events.jsonl"')
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            after = 0
+            while after < last:
+                with runtime._lock:
+                    batches = runtime.store.journal(after)
+                if not batches:
+                    break
+                for batch in batches:
+                    if batch["seq"] > last:
+                        break
+                    self.wfile.write(json.dumps(batch, allow_nan=False).encode() + b"\n")
+                    after = batch["seq"]
+            self.close_connection = True
+            return
         path = self.server.runtime.neural_path
         if not path.exists():
             self._send(200, b"", "application/x-ndjson")
@@ -182,8 +213,15 @@ class ObserverHandler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ValueError("JSON object required")
             if self.path == "/api/command":
-                result = self.server.runtime.submit(data["kind"], data["payload"])
+                if hasattr(self.server.runtime, "metadata"):
+                    result = self.server.runtime.submit(data["kind"], data["payload"], data.get("request_id"))
+                else:
+                    result = self.server.runtime.submit(data["kind"], data["payload"])
                 self._send(202, result)
+            elif self.path == "/api/override/preview" and hasattr(self.server.runtime, "preview_override"):
+                self._send(200, self.server.runtime.preview_override(data["operation"], data["target"]))
+            elif self.path == "/api/override/confirm" and hasattr(self.server.runtime, "confirm_override"):
+                self._send(200, self.server.runtime.confirm_override(data["token"], data["confirmation"]))
             elif self.path == "/api/save":
                 self.server.runtime.save_snapshot()
                 self._send(200, {"saved": True})
@@ -191,19 +229,31 @@ class ObserverHandler(BaseHTTPRequestHandler):
                 self._send(404, {"error": "not found"})
         except (ValueError, KeyError, TypeError, OverflowError) as exc:
             self._send(400, {"error": str(exc)})
+        except (OSError, RuntimeError, sqlite3.Error) as exc:
+            self._send(503, {"error": str(exc)})
 
 
 def main():
     parser = argparse.ArgumentParser(description="Subject-01 live observer")
-    parser.add_argument("--data-dir", default="./data-observer")
+    parser.add_argument("--data-dir")
+    parser.add_argument("--candidate", action="store_true", help="Run the durable pre-birth candidate")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
-    runtime = ObserverRuntime.open(args.data_dir, SimulationConfig())
-    server = ObserverServer(runtime, args.port)
-    runtime.start()
+    if args.candidate:
+        from .candidate import CandidateRuntime
+        runtime = CandidateRuntime.open(args.data_dir or "./data-candidate", SimulationConfig())
+    else:
+        runtime = ObserverRuntime.open(args.data_dir or "./data-observer", SimulationConfig())
+    try:
+        server = ObserverServer(runtime, args.port)
+        runtime.start()
+    except BaseException:
+        runtime.stop()
+        raise
     url = f"http://127.0.0.1:{server.server_port}"
-    print(f"Observer: {url}\nDiagnostic model, PRE-BIRTH. Ctrl+C saves and stops.", flush=True)
+    mode = "Durable candidate" if args.candidate else "Diagnostic model"
+    print(f"Observer: {url}\n{mode}, PRE-BIRTH. Ctrl+C saves and stops.", flush=True)
     if not args.no_browser:
         webbrowser.open(url)
     try:
