@@ -30,6 +30,8 @@ def test_browser_world_graph_and_mobile(live_server):
         expect(page.locator("#objects")).to_have_text(str(before + 1))
         page.locator("#save").click()
         expect(page.locator("#notice")).to_contain_text("сохранено")
+        page.wait_for_timeout(350)
+        expect(page.locator("#notice")).to_contain_text("сохранено")
         page.locator("#expand").click()
         assert "expanded" in page.locator("#brainPanel").get_attribute("class")
         page.locator("#zoomIn").click()

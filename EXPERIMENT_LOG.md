@@ -87,3 +87,10 @@ resource balances, but the final 1,000 ticks averaged 63.16 ms against a 50 ms
 budget. Removed redundant full-memory copies from normal step cloning and UI
 frames, and duplicate checkpoint encoding. Added predecessor-immutability testing.
 The local engineering suite now has 42 passing tests; a second soak verifies this optimization.
+
+The second 10,000-tick soak passed the measured time budget: 27.77 ms mean,
+35.23 ms p95, 33.45 ms over the final 1,000 ticks. All ten restarts and resource
+balances passed. Persistent log growth is approximately 8.66 GB/day at 20 Hz.
+CI also exposed an older observer race: live polling overwrote save confirmation
+within 150 ms. User action notices now remain visible for four seconds; connection
+and runtime errors still take priority. Added a browser assertion across multiple polls.

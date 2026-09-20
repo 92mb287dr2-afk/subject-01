@@ -9,7 +9,8 @@ function currentBrain(){return state?.model_graphs?.[$("graphLayer").value] || s
 let locations = {}, camera = {zoom:1,x:0,y:0}, drag = null;
 let lastNetwork = 0, reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 let worldPaused=false;
-function notice(text, warn=false){$("notice").textContent=text;$("notice").classList.toggle("warn",warn);}
+let noticeHeldUntil=0;
+function notice(text, warn=false, hold=0){$("notice").textContent=text;$("notice").classList.toggle("warn",warn);if(hold>0)noticeHeldUntil=performance.now()+hold;}
 function fmt(n){return Number(n).toFixed(3);}
 function fit(canvas){
   const r=canvas.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2);
@@ -136,9 +137,9 @@ function accept(data){
   if(data.error)notice("Симуляция остановилась: "+data.error,true);
   else if(data.gap)notice("Пропущен участок онлайн-потока. Все записанные сигналы доступны в полном журнале.",true);
   else if(!data.running)notice("Мир остановлен. Отображается последнее состояние.",true);
-  else if(worldPaused)notice("Техническая пауза: время мира не идёт.");
+  else if(worldPaused&&performance.now()>noticeHeldUntil)notice("Техническая пауза: время мира не идёт.");
   else if(recovering)notice("Связь восстановлена. Снова показано актуальное состояние мира.");
-  else if(!$("notice").classList.contains("warn"))notice("Прямые данные сети · все ненулевые передачи журналируются · это не биологические спайки");
+  else if(!$("notice").classList.contains("warn")&&performance.now()>noticeHeldUntil)notice("Прямые данные сети · все ненулевые передачи журналируются · это не биологические спайки");
   const b=state.body;$("energy").textContent=Math.round(b.energy*100)+"%";$("energyBar").value=b.energy;
   $("speed").textContent=Math.hypot(b.vx,b.vy).toFixed(2);$("objects").textContent=state.objects.length;
   $("tick").textContent=state.tick;$("edges").textContent=currentBrain().edges.length;$("nodeCount").textContent=currentBrain().nodes.length+" узла";
@@ -175,10 +176,10 @@ $("add").onclick=()=>{addMode=!addMode;$("add").classList.toggle("active",addMod
 $("world").onclick=async e=>{
   if(!addMode||!state)return;
   const r=$("world").getBoundingClientRect(),x=(e.clientX-r.left)/r.width*state.width,y=(e.clientY-r.top)/r.height*state.height;
-  try{const result=await post("/api/command",{request_id:crypto.randomUUID(),kind:"spawn_object",payload:{x,y,kind:"stone"}});notice("Объект поставлен в очередь · вмешательство №"+result.event_id);}
+  try{const result=await post("/api/command",{request_id:crypto.randomUUID(),kind:"spawn_object",payload:{x,y,kind:"stone"}});notice("Объект поставлен в очередь · вмешательство №"+result.event_id,false,4000);}
   catch(e){notice("Не удалось добавить объект: "+e.message,true);}
 };
-$("save").onclick=async()=>{const b=$("save");b.disabled=true;try{await post("/api/save",{});notice("Состояние мира, тела и сети сохранено.");}catch(e){notice("Ошибка сохранения: "+e.message,true);}finally{b.disabled=false;}};
+$("save").onclick=async()=>{const b=$("save");b.disabled=true;try{await post("/api/save",{});notice("Состояние мира, тела и сети сохранено.",false,4000);}catch(e){notice("Ошибка сохранения: "+e.message,true);}finally{b.disabled=false;}};
 $("filter").onchange=renderEvents;
 $("pauseWorld").onclick=async()=>{try{await post(worldPaused?"/api/resume":"/api/pause",{});}catch(e){notice(e.message,true);}};
 $("graphLayer").onchange=()=>{locations={};pulses=[];selected=null;inspect();$("graphNote").textContent=$("graphLayer").value==="brain"?"Передачи сенсорной сети":$("graphLayer").value==="researcher"?"Составной прогноз исследователя · отдельный темп обучения каждого канала":"Последний вычисленный прогноз · импульсы = вход × вес";};
@@ -192,7 +193,7 @@ $("previewOverride").onclick=async()=>{try{const operation=$("overrideOperation"
 }catch(e){notice(e.message,true);}};
 $("confirmOverride").onclick=async()=>{if(!overrideGrant)return;try{
   await post("/api/override/confirm",{token:overrideGrant.token,confirmation:$("overrideConfirmation").value});
-  notice("Исключительное вмешательство записано в аудит.");
+  notice("Исключительное вмешательство записано в аудит.",false,4000);
 }catch(e){notice(e.message,true);}finally{overrideGrant=null;$("overridePreview").hidden=true;}};
 $("threshold").oninput=()=>$("thresholdValue").textContent=Number($("threshold").value).toFixed(2);
 $("expand").onclick=()=>{const on=$("brainPanel").classList.toggle("expanded");$("expand").textContent=on?"↙ Свернуть":"↗ Развернуть";};

@@ -1,0 +1,168 @@
+{
+  "code_hash": "d3c5f7923cb2397d2cd9b843acc1526b53362290582f56114821affe484754d0",
+  "protocol_hash": "eae374baadca2ba4c3035e550b1685123649f05e84c7e2a7f2a1fb9a94fafe77",
+  "protocol": {
+    "protocol": "prebirth-transfer-validation-2",
+    "seeds": [
+      131,
+      211,
+      389
+    ],
+    "training_ticks": 400,
+    "transfer_ticks": 400,
+    "new_tasks": [
+      "severe_damage_recovery",
+      "unseen_motor_permutation"
+    ],
+    "max_mean_adaptive_to_fixed_error_ratio": 0.95,
+    "metric": "mean pre-update research prediction MSE during autonomous transfer",
+    "control": "same seeds/intervention schedule; fixed middle learning method; trajectories may diverge",
+    "motor_permutation": [
+      3,
+      2,
+      0,
+      1
+    ],
+    "scope": "fresh seeds and actuator permutation reserved before evaluating per-channel adaptation; earlier protocol is now development data"
+  },
+  "results": [
+    {
+      "seed": 131,
+      "task": "severe_damage_recovery",
+      "adaptive": {
+        "error": 0.00016157002018482515,
+        "methods": [
+          0,
+          1,
+          2
+        ],
+        "memories": 14,
+        "final_mode": "ACTIVE"
+      },
+      "fixed": {
+        "error": 0.00016543471700251173,
+        "methods": [
+          1
+        ],
+        "memories": 14,
+        "final_mode": "ACTIVE"
+      },
+      "ratio": 0.9766391426919907
+    },
+    {
+      "seed": 131,
+      "task": "unseen_motor_permutation",
+      "adaptive": {
+        "error": 0.0000029064994438470785,
+        "methods": [
+          1,
+          2
+        ],
+        "memories": 21,
+        "final_mode": "ACTIVE"
+      },
+      "fixed": {
+        "error": 0.000003052272419037776,
+        "methods": [
+          1
+        ],
+        "memories": 21,
+        "final_mode": "ACTIVE"
+      },
+      "ratio": 0.9522411648837517
+    },
+    {
+      "seed": 211,
+      "task": "severe_damage_recovery",
+      "adaptive": {
+        "error": 0.00016999944249405718,
+        "methods": [
+          0,
+          1,
+          2
+        ],
+        "memories": 14,
+        "final_mode": "ACTIVE"
+      },
+      "fixed": {
+        "error": 0.00017309934462565483,
+        "methods": [
+          1
+        ],
+        "memories": 14,
+        "final_mode": "ACTIVE"
+      },
+      "ratio": 0.9820917743027768
+    },
+    {
+      "seed": 211,
+      "task": "unseen_motor_permutation",
+      "adaptive": {
+        "error": 0.000004093737318361165,
+        "methods": [
+          1,
+          2
+        ],
+        "memories": 23,
+        "final_mode": "ACTIVE"
+      },
+      "fixed": {
+        "error": 0.000004336347459344047,
+        "methods": [
+          1
+        ],
+        "memories": 23,
+        "final_mode": "ACTIVE"
+      },
+      "ratio": 0.9440519600291484
+    },
+    {
+      "seed": 389,
+      "task": "severe_damage_recovery",
+      "adaptive": {
+        "error": 0.00016025625380488147,
+        "methods": [
+          0,
+          1,
+          2
+        ],
+        "memories": 12,
+        "final_mode": "ACTIVE"
+      },
+      "fixed": {
+        "error": 0.00016461799974396837,
+        "methods": [
+          1
+        ],
+        "memories": 12,
+        "final_mode": "ACTIVE"
+      },
+      "ratio": 0.9735038334454874
+    },
+    {
+      "seed": 389,
+      "task": "unseen_motor_permutation",
+      "adaptive": {
+        "error": 0.0000035996801317688684,
+        "methods": [
+          0,
+          1,
+          2
+        ],
+        "memories": 23,
+        "final_mode": "ACTIVE"
+      },
+      "fixed": {
+        "error": 0.000003427110849566108,
+        "methods": [
+          1
+        ],
+        "memories": 23,
+        "final_mode": "ACTIVE"
+      },
+      "ratio": 1.0503541582918476
+    }
+  ],
+  "mean_ratio": 0.979813672274167,
+  "passed": false
+}

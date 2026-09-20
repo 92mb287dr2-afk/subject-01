@@ -1,0 +1,65 @@
+{
+  "code_hash": "48932a459c7224a17e5f54a267d943da181bb8d06ca834da24a2e86207ecc101",
+  "ticks": 10000,
+  "simulated_seconds": 500.0,
+  "mean_ms": 27.77388694419908,
+  "p95_ms": 35.22697700009303,
+  "max_ms": 93.5787360001541,
+  "disk_bytes": 50139136,
+  "projected_gb_per_24h": 8.6640427008,
+  "final_checkpoint_bytes": 299945,
+  "samples": [
+    {
+      "tick": 1000,
+      "memories": 21,
+      "mean_last_1000_ms": 21.125872141997434
+    },
+    {
+      "tick": 2000,
+      "memories": 53,
+      "mean_last_1000_ms": 22.624525384996332
+    },
+    {
+      "tick": 3000,
+      "memories": 86,
+      "mean_last_1000_ms": 25.15551919600034
+    },
+    {
+      "tick": 4000,
+      "memories": 121,
+      "mean_last_1000_ms": 26.58616428299524
+    },
+    {
+      "tick": 5000,
+      "memories": 154,
+      "mean_last_1000_ms": 27.38993156400602
+    },
+    {
+      "tick": 6000,
+      "memories": 186,
+      "mean_last_1000_ms": 28.430204788003493
+    },
+    {
+      "tick": 7000,
+      "memories": 217,
+      "mean_last_1000_ms": 30.255840337995323
+    },
+    {
+      "tick": 8000,
+      "memories": 249,
+      "mean_last_1000_ms": 31.114652754997223
+    },
+    {
+      "tick": 9000,
+      "memories": 280,
+      "mean_last_1000_ms": 31.60774727900207
+    },
+    {
+      "tick": 10000,
+      "memories": 313,
+      "mean_last_1000_ms": 33.44841171199732
+    }
+  ],
+  "continuity_and_balance_passed": true,
+  "real_time_budget_passed": true
+}
