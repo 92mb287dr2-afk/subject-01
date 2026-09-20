@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from collections import deque
 from copy import deepcopy
+from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 import json
@@ -48,7 +49,8 @@ class ObserverRuntime(SimulationRuntime):
         return dict(tick=core.tick_index, time=core.simulation_time,
                     width=core.config.width, height=core.config.height,
                     body=deepcopy(core.body), brain=core.brain.state(),
-                    objects=core.state()["objects"], events=deepcopy(core.last_neural_events))
+                    objects=[asdict(core.objects[key]) for key in sorted(core.objects)],
+                    events=deepcopy(core.last_neural_events))
 
     def _after_step(self, applied):
         frame = self._frame()

@@ -370,6 +370,21 @@ r.advance()
         self.assertEqual(events[0]["memory_id"], core.memories[0]["memory_id"])
         self.assertEqual(events[0]["action_candidate"], core.memories[0]["representation"]["action"])
 
+    def test_copy_on_write_steps_preserve_confirmed_predecessor(self):
+        core = LifeCore()
+        for _ in range(80):
+            core.step()
+        before = core.state()
+        successor = core.clone_for_step()
+        successor.submit("damage_body", {"amount": 1})
+        for _ in range(150):
+            successor.step()
+        self.assertEqual(core.state(), before)
+        self.assertIsNot(successor.memories, core.memories)
+        exposed = successor.state()
+        exposed["life"]["memories"][0]["representation"]["sensors"][0] = 999
+        self.assertNotEqual(successor.memories[0]["representation"]["sensors"][0], 999)
+
     def test_no_silent_legacy_migration_corruption_or_code_change(self):
         (self.path / "latest.snapshot.json").write_text("{}")
         with self.assertRaises(ValueError):

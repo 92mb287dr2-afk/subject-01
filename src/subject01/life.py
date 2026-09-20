@@ -315,15 +315,29 @@ class LifeCore(ObserverCore):
         self.last_neural_events = events
         return applied
 
-    def state(self):
+    def state(self, copy_memory=True):
         state = SimulationCore.state(self)
         state["life"] = deepcopy(dict(format=LIFE_FORMAT, laws_hash=digest(LAWS), body=self.body,
             brain=self.brain.state(), controller=self.controller.state(), researcher=self.researcher.state(),
-            arbiter=vars(self.arbiter), experience=self.experience, memories=self.memories,
+            arbiter=vars(self.arbiter), experience=self.experience,
+            memories=self.memories if copy_memory else [],
             salience=self.salience, kernel=self.kernel, repair=self.repair,
             resource_totals=self.resource_totals, neural_sequence=self.neural_sequence,
             next_memory_id=self.next_memory_id))
+        if not copy_memory:
+            # Internal serialization view, only used under the writer lock. Existing
+            # consolidated records are immutable to normal world/development steps.
+            state["life"]["memories"] = self.memories
         return state
+
+    def clone_for_step(self):
+        state = self.state(copy_memory=False)
+        state["life"]["memories"] = []
+        core = self.from_state(state)
+        # Copy the index, not every immutable record. Exceptional edits use the full
+        # from_state(state()) copy instead and cannot mutate a confirmed predecessor.
+        core.memories = self.memories[:]
+        return core
 
     @classmethod
     def from_state(cls, state):

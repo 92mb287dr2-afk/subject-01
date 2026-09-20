@@ -81,3 +81,9 @@ memory was actually used (1.030853). Per-channel method adaptation was then eval
 on reserved new seeds and a different actuator permutation: ratio 0.979814 versus
 the preregistered maximum 0.95. C18 remains failed; no threshold was relaxed.
 CI now exposes this failure as a separate research gate. No formal birth occurred.
+
+The 10,000-tick soak retained identity/state across ten restarts and preserved
+resource balances, but the final 1,000 ticks averaged 63.16 ms against a 50 ms
+budget. Removed redundant full-memory copies from normal step cloning and UI
+frames, and duplicate checkpoint encoding. Added predecessor-immutability testing.
+The local engineering suite now has 42 passing tests; a second soak verifies this optimization.

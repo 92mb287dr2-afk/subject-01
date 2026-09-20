@@ -151,6 +151,8 @@ class ContinuityStore:
         chain = hashlib.sha256(previous.encode() + raw_events).hexdigest()
         state["continuity"]["journal_hash"] = chain
         raw_state = encode(state)
+        if len(raw_state) > 8 * 1024 * 1024:
+            raise OSError("Checkpoint budget reached (8 MiB); technical pause, no memories deleted")
         with self.transaction():
             if command:
                 request_id, request, receipt = command

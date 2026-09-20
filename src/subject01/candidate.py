@@ -7,7 +7,7 @@ import threading
 import time
 import uuid
 
-from .continuity import ContinuityStore, code_hash, digest, encode
+from .continuity import ContinuityStore, code_hash, digest
 from .core import SimulationConfig
 from .life import LifeCore, LAWS
 from .observer import ObserverRuntime
@@ -50,8 +50,8 @@ class CandidateRuntime(ObserverRuntime):
             store.close()
             raise
 
-    def _state(self, core=None):
-        state = (core or self.core).state()
+    def _state(self, core=None, copy_memory=True):
+        state = (core or self.core).state(copy_memory=copy_memory)
         state["continuity"] = deepcopy(self.metadata)
         return state
 
@@ -61,10 +61,8 @@ class CandidateRuntime(ObserverRuntime):
 
     def _commit(self, core, events, command=None):
         # Keep the previous confirmed state in memory until SQLite acknowledges commit.
-        state = self._state(core)
+        state = self._state(core, copy_memory=False)
         try:
-            if len(encode(state)) > 8 * 1024 * 1024:
-                raise OSError("Checkpoint budget reached (8 MiB); technical pause, no memories deleted")
             self.store.commit(state, events, command)
         except BaseException as exc:
             # Even an ambiguous post-COMMIT failure stops execution, never retries a tick.
@@ -88,7 +86,7 @@ class CandidateRuntime(ObserverRuntime):
                 raise ValueError("Intervention queue full")
             if kind == "spawn_object" and len(self.core.objects) + len(self.core.pending) >= 256:
                 raise ValueError("World object budget reached (256)")
-            core = LifeCore.from_state(self.core.state())
+            core = self.core.clone_for_step()
             command = core.submit(kind, payload)
             receipt = dict(event_id=command.event_id, request_id=request_id,
                            submitted_at_tick=command.submitted_at_tick, kind=kind, payload=command.payload)
@@ -100,7 +98,7 @@ class CandidateRuntime(ObserverRuntime):
         with self._lock:
             if shutil.disk_usage(self.store.data_dir).free < 64 * 1024 * 1024:
                 raise OSError("Less than 64 MiB free: technical pause; protected memories were not deleted")
-            core = LifeCore.from_state(self.core.state())
+            core = self.core.clone_for_step()
             core.step()
             events = deepcopy(core.last_neural_events)
             events.append(dict(kind="continuity_committed", source="store", tick=core.tick_index))

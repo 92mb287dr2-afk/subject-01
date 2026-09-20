@@ -5,6 +5,7 @@ from pathlib import Path
 import statistics
 import tempfile
 import time
+import sys
 
 from subject01.candidate import CandidateRuntime
 from subject01.continuity import code_hash
@@ -29,6 +30,7 @@ def run(ticks):
                     assert runtime.metadata["origin_id"] == origin
                     samples.append(dict(tick=i + 1, memories=len(runtime.core.memories),
                                         mean_last_1000_ms=statistics.mean(durations[-1000:]) * 1000))
+                    print(json.dumps(samples[-1]), file=sys.stderr, flush=True)
             runtime.store.verify_journal()
             totals, body = runtime.core.resource_totals, runtime.core.body
             for resource, initial in (("energy", 1), ("material", .5)):
