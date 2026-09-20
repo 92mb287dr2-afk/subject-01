@@ -6,6 +6,7 @@ from .continuity import digest
 from .core import SimulationCore
 from .development import MainController, InternalResearcher, ActionArbiter
 from .organism import ObserverCore, PredictiveNetwork, clip
+from .plasticity import TrialNetwork
 
 LIFE_FORMAT = 1
 LAWS = dict(dt=.05, channels=16, motors=4, joints=4, experience_window=128,
@@ -15,7 +16,10 @@ LAWS = dict(dt=.05, channels=16, motors=4, joints=4, experience_window=128,
             material_flow=.003, recovery_material_flow=.025,
             basal_cost=.005, motor_cost=.03, repair_rate=.12,
             repair_energy=.2, repair_material=.15,
-            recovery_health=.75, recovery_energy=.6)
+            recovery_health=.75, recovery_energy=.6,
+            edge_formation_energy=.003, edge_formation_material=.002,
+            edge_repair_energy=.002, edge_repair_material=.001,
+            edge_trial_ticks=40, edge_repair_ticks=10)
 
 
 class LifeCore(ObserverCore):
@@ -23,6 +27,7 @@ class LifeCore(ObserverCore):
 
     def __init__(self, config=None):
         super().__init__(config)
+        self.brain = TrialNetwork(self.config.seed)
         if self.config.dt != LAWS["dt"] or min(self.config.width, self.config.height) < 10:
             raise ValueError("Candidate laws require dt=0.05 and a world at least 10 x 10")
         self.body.update(health=1.0, material=.5, strength=1.0,
@@ -35,7 +40,11 @@ class LifeCore(ObserverCore):
         self.memories = []
         self.next_memory_id = 1
         self.salience = .001
-        self.kernel = dict(intact=True, recoveries=0)
+        self.kernel = dict(intact=True, recoveries=0,
+                           policy=dict(energy_flow=LAWS["recovery_energy_flow"],
+                                       material_flow=LAWS["recovery_material_flow"],
+                                       health_threshold=LAWS["recovery_health"],
+                                       energy_threshold=LAWS["recovery_energy"]))
         self.repair = None
         self.resource_totals = dict(energy_in=0.0, energy_out=0.0, energy_spill=0.0,
                                     material_in=0.0, material_out=0.0, material_spill=0.0)
@@ -71,8 +80,8 @@ class LifeCore(ObserverCore):
     def _resources(self, motors):
         b, dt = self.body, self.config.dt
         recovering = b["mode"] == "RECOVERING"
-        energy_in = dt * LAWS["recovery_energy_flow" if recovering else "energy_flow"]
-        material_in = dt * LAWS["recovery_material_flow" if recovering else "material_flow"]
+        energy_in = dt * (self.kernel["policy"]["energy_flow"] if recovering else LAWS["energy_flow"])
+        material_in = dt * (self.kernel["policy"]["material_flow"] if recovering else LAWS["material_flow"])
         energy = b["energy"] + energy_in
         material = b["material"] + material_in
         basal = min(energy, dt * LAWS["basal_cost"])
@@ -181,6 +190,61 @@ class LifeCore(ObserverCore):
                 b["health"] = max(0, b["health"] - .002)
         b["motors"] = list(action)
 
+    def _develop_network(self, tick):
+        proposal = self.brain.proposal
+        if not proposal or proposal["proposed_tick"] >= tick:
+            return []
+        events, b = [], self.body
+        proposal["elapsed"] += 1
+        edge_id = proposal["source"] + ":" + proposal["target"]
+        def pay(energy, material):
+            if b["energy"] < energy or b["material"] < material:
+                return False
+            b["energy"] -= energy
+            b["material"] -= material
+            self.resource_totals["energy_out"] += energy
+            self.resource_totals["material_out"] += material
+            return True
+        if proposal["phase"] == "model_trial":
+            if b["mode"] != "ACTIVE" or proposal["elapsed"] > 200:
+                self.brain.proposal = None
+                return [dict(kind="network_change_rejected", source="development", edge=edge_id,
+                             reason="resource_or_recovery_limit")]
+            if not pay(LAWS["edge_formation_energy"], LAWS["edge_formation_material"]):
+                return []
+            edge = self.brain.add_edge(proposal["source"], proposal["target"], 0.0, False, tick)
+            proposal.update(phase="probation", age=0)
+            events.append(dict(kind="created", actor="development", edge=edge_id, source=edge["source"],
+                               target=edge["target"], weight=0.0, trial=proposal["id"]))
+        edge = next(e for e in self.brain.edges if e["id"] == edge_id)
+        if proposal["phase"] == "probation":
+            limit = max(.015, proposal["baseline_error"] * 2)
+            if self.brain.error > limit or b["mode"] != "ACTIVE":
+                proposal.update(phase="repairing", age=0)
+                events.append(dict(kind="network_change_rejected", source="development", edge=edge_id,
+                                   error=self.brain.error, limit=limit))
+            else:
+                proposal["age"] += 1
+                before = edge["weight"]
+                edge["weight"] = proposal["weight"] * min(1, proposal["age"] / LAWS["edge_trial_ticks"])
+                events.append(dict(kind="weight", actor="development", edge=edge_id,
+                                   before=before, weight=edge["weight"]))
+                if proposal["age"] >= LAWS["edge_trial_ticks"]:
+                    edge["plastic"] = True
+                    self.brain.proposal = None
+                    events.append(dict(kind="network_change_integrated", source="development", edge=edge_id))
+        elif proposal["phase"] == "repairing":
+            if pay(LAWS["edge_repair_energy"] / LAWS["edge_repair_ticks"],
+                   LAWS["edge_repair_material"] / LAWS["edge_repair_ticks"]):
+                proposal["age"] += 1
+                events.append(dict(kind="network_repair_progress", source="development", edge=edge_id,
+                                   age=proposal["age"]))
+                if proposal["age"] >= LAWS["edge_repair_ticks"]:
+                    self.brain.edges.remove(edge)
+                    self.brain.proposal = None
+                    events.append(dict(kind="removed", source="development", edge=edge_id))
+        return events
+
     def step(self):
         if not self.kernel["intact"]:
             raise RuntimeError("Kernel was explicitly destroyed; replacement is forbidden")
@@ -203,7 +267,11 @@ class LifeCore(ObserverCore):
         events.extend(self.researcher.observe(sensors, tick))
         motors, neural = self.brain.step(sensors[:8], tick)
         events.extend(dict(actor="network", **e) for e in neural)
-        main, research = self.controller.propose(sensors, motors), self.researcher.propose()
+        recalled = self.controller.recall(sensors, self.memories)
+        main, research = self.controller.propose(sensors, motors, recalled), self.researcher.propose()
+        if recalled is not None:
+            events.append(dict(kind="memory_recalled", source="controller", memory_id=self.controller.recall_id,
+                               action_candidate=recalled))
         events.append(dict(kind="action_proposed", source="researcher", action=research))
         action, decision = self.arbiter.select(main, research, b["mode"] == "RECOVERING")
         events.append(decision)
@@ -214,7 +282,8 @@ class LifeCore(ObserverCore):
         self._move(action)
         events.append(self._resources(action))
         events.extend(self._develop(tick))
-        if b["mode"] == "RECOVERING" and b["health"] >= LAWS["recovery_health"] and b["energy"] >= LAWS["recovery_energy"]:
+        events.extend(self._develop_network(tick))
+        if b["mode"] == "RECOVERING" and b["health"] >= self.kernel["policy"]["health_threshold"] and b["energy"] >= self.kernel["policy"]["energy_threshold"]:
             b["mode"] = "ACTIVE"
             events.append(dict(kind="recovery_completed", source="kernel"))
         experience = dict(tick=tick, sensors=sensors, action=action)
@@ -267,7 +336,7 @@ class LifeCore(ObserverCore):
         for record in core.memories:
             if record["integrity_hash"] != digest({k: v for k, v in record.items() if k != "integrity_hash"}):
                 raise ValueError("Protected memory integrity failure")
-        core.brain = PredictiveNetwork.restore(life["brain"])
+        core.brain = TrialNetwork.restore(life["brain"])
         core.controller = MainController.restore(life["controller"])
         core.researcher = InternalResearcher.restore(life["researcher"])
         core.arbiter.__dict__.update(deepcopy(life["arbiter"]))

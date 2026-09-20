@@ -207,8 +207,9 @@ class ObserverHandler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if length < 1 or length > 4096:
-                raise ValueError("body must be 1..4096 bytes")
+            limit = 32768 if self.path == "/api/override/preview" else 4096
+            if length < 1 or length > limit:
+                raise ValueError(f"body must be 1..{limit} bytes")
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError("JSON object required")
@@ -219,12 +220,14 @@ class ObserverHandler(BaseHTTPRequestHandler):
                     result = self.server.runtime.submit(data["kind"], data["payload"])
                 self._send(202, result)
             elif self.path == "/api/override/preview" and hasattr(self.server.runtime, "preview_override"):
-                self._send(200, self.server.runtime.preview_override(data["operation"], data["target"]))
+                self._send(200, self.server.runtime.preview_override(data["operation"], data["target"], data.get("replacement")))
             elif self.path == "/api/override/confirm" and hasattr(self.server.runtime, "confirm_override"):
                 self._send(200, self.server.runtime.confirm_override(data["token"], data["confirmation"]))
             elif self.path == "/api/save":
                 self.server.runtime.save_snapshot()
                 self._send(200, {"saved": True})
+            elif self.path in ("/api/pause", "/api/resume") and hasattr(self.server.runtime, "set_paused"):
+                self._send(200, self.server.runtime.set_paused(self.path == "/api/pause"))
             else:
                 self._send(404, {"error": "not found"})
         except (ValueError, KeyError, TypeError, OverflowError) as exc:

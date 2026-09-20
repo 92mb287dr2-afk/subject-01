@@ -1,0 +1,12 @@
+{
+  "protocol": "prebirth-transfer-validation-2",
+  "seeds": [131, 211, 389],
+  "training_ticks": 400,
+  "transfer_ticks": 400,
+  "new_tasks": ["severe_damage_recovery", "unseen_motor_permutation"],
+  "max_mean_adaptive_to_fixed_error_ratio": 0.95,
+  "metric": "mean pre-update research prediction MSE during autonomous transfer",
+  "control": "same seeds/intervention schedule; fixed middle learning method; trajectories may diverge",
+  "motor_permutation": [3, 2, 0, 1],
+  "scope": "fresh seeds and actuator permutation reserved before evaluating per-channel adaptation; earlier protocol is now development data"
+}

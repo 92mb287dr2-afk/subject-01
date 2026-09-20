@@ -8,6 +8,7 @@ let pulses = [], eventsByType = {created:[],weight:[],signal:[],development:[],a
 function currentBrain(){return state?.model_graphs?.[$("graphLayer").value] || state?.brain;}
 let locations = {}, camera = {zoom:1,x:0,y:0}, drag = null;
 let lastNetwork = 0, reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let worldPaused=false;
 function notice(text, warn=false){$("notice").textContent=text;$("notice").classList.toggle("warn",warn);}
 function fmt(n){return Number(n).toFixed(3);}
 function fit(canvas){
@@ -120,6 +121,7 @@ function accept(data){
   const recovering = !connected && !!state;
   if(session && session!==data.session){cursor=-1;pulses=[];eventsByType={created:[],weight:[],signal:[],development:[],all:[]};eventTotal=0;newTotal=0;notice("Сервер перезапущен. Восстановлено сохранённое состояние.",true);}
   session=data.session;cursor=data.cursor;state=data.snapshot;lastNetwork=performance.now();connected=data.running&&!data.error;
+  worldPaused=!!data.paused;$("pauseWorld").hidden=!state.development;$("pauseWorld").textContent=worldPaused?"Продолжить":"Пауза";
   const now=performance.now();
   for(const batch of data.batches)for(const e of batch.events){
     eventTotal++;if(e.kind==="created")newTotal++;
@@ -134,6 +136,7 @@ function accept(data){
   if(data.error)notice("Симуляция остановилась: "+data.error,true);
   else if(data.gap)notice("Пропущен участок онлайн-потока. Все записанные сигналы доступны в полном журнале.",true);
   else if(!data.running)notice("Мир остановлен. Отображается последнее состояние.",true);
+  else if(worldPaused)notice("Техническая пауза: время мира не идёт.");
   else if(recovering)notice("Связь восстановлена. Снова показано актуальное состояние мира.");
   else if(!$("notice").classList.contains("warn"))notice("Прямые данные сети · все ненулевые передачи журналируются · это не биологические спайки");
   const b=state.body;$("energy").textContent=Math.round(b.energy*100)+"%";$("energyBar").value=b.energy;
@@ -149,7 +152,7 @@ function accept(data){
     $("health").textContent=Math.round(d.health*100)+"%";$("material").textContent=fmt(d.material);
     $("strength").textContent=fmt(d.strength);$("memories").textContent=d.memories;
     $("hypothesis").textContent=d.hypothesis ? "Гипотеза №"+d.hypothesis.id+" · "+d.hypothesis.phase+" · прогноз и реальная проба разделены" : d.repair ? "Компенсация изменения: время и ресурсы расходуются" : "Накопление опыта для следующей гипотезы";
-    $("modelErrors").textContent="Ошибка управления: "+fmt(d.controller_error)+" · исследователя: "+fmt(d.researcher_error)+" · выбранный метод: "+d.method;
+    $("modelErrors").textContent="Ошибка управления: "+fmt(d.controller_error)+" · исследователя: "+fmt(d.researcher_error)+" · методы по каналам: "+d.channel_methods.join(", ");
   }
   $("eventCount").textContent=eventTotal.toLocaleString("ru")+" полученных событий";
   $("clock").textContent=Math.floor(state.time/60).toString().padStart(2,"0")+":"+Math.floor(state.time%60).toString().padStart(2,"0");
@@ -177,13 +180,15 @@ $("world").onclick=async e=>{
 };
 $("save").onclick=async()=>{const b=$("save");b.disabled=true;try{await post("/api/save",{});notice("Состояние мира, тела и сети сохранено.");}catch(e){notice("Ошибка сохранения: "+e.message,true);}finally{b.disabled=false;}};
 $("filter").onchange=renderEvents;
-$("graphLayer").onchange=()=>{locations={};pulses=[];selected=null;inspect();$("graphNote").textContent=$("graphLayer").value==="brain"?"Передачи сенсорной сети":"Последний вычисленный прогноз · импульсы = вход × вес";};
+$("pauseWorld").onclick=async()=>{try{await post(worldPaused?"/api/resume":"/api/pause",{});}catch(e){notice(e.message,true);}};
+$("graphLayer").onchange=()=>{locations={};pulses=[];selected=null;inspect();$("graphNote").textContent=$("graphLayer").value==="brain"?"Передачи сенсорной сети":$("graphLayer").value==="researcher"?"Составной прогноз исследователя · отдельный темп обучения каждого канала":"Последний вычисленный прогноз · импульсы = вход × вес";};
 $("inspectState").onclick=async()=>{try{const r=await fetch("/api/state");if(!r.ok)throw Error(r.status);$("fullState").textContent=JSON.stringify(await r.json(),null,2);}catch(e){notice(e.message,true);}};
 let overrideGrant=null;
 $("previewOverride").onclick=async()=>{try{const operation=$("overrideOperation").value;
-  const target=operation==="destroy_kernel"?"kernel":Number($("memoryTarget").value);
-  overrideGrant=await post("/api/override/preview",{operation,target});$("overridePreview").hidden=false;
-  $("overrideConfirmation").value="";$("overrideConsequence").textContent=overrideGrant.consequence+" В течение 60 секунд введите: "+overrideGrant.required_confirmation;
+  const target=operation.includes("kernel")||operation==="edit_recovery_policy"?"kernel":operation==="edit_model_weights"?$("modelTarget").value:Number($("memoryTarget").value);
+  const replacement=operation.startsWith("edit_")||operation==="replace_memory"?JSON.parse($("overrideReplacement").value):null;
+  overrideGrant=await post("/api/override/preview",{operation,target,replacement});$("overridePreview").hidden=false;
+  $("overrideConfirmation").value="";$("overrideConsequence").textContent=overrideGrant.consequence+" Новое содержание: "+JSON.stringify(overrideGrant.replacement)+". В течение 60 секунд введите: "+overrideGrant.required_confirmation;
 }catch(e){notice(e.message,true);}};
 $("confirmOverride").onclick=async()=>{if(!overrideGrant)return;try{
   await post("/api/override/confirm",{token:overrideGrant.token,confirmation:$("overrideConfirmation").value});
@@ -210,7 +215,7 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape"){$("brainPanel").cla
 let lastDraw=0;
 function draw(now){
   if(now-lastDraw>=32){lastDraw=now;drawWorld();drawBrain(now);
-    const live=connected&&now-lastNetwork<3000;$("lamp").classList.toggle("online",live);$("connection").textContent=live?"МИР АКТИВЕН":"НЕТ LIVE-СВЯЗИ";
+    const live=connected&&now-lastNetwork<3000;$("lamp").classList.toggle("online",live&&!worldPaused);$("connection").textContent=live?(worldPaused?"МИР НА ПАУЗЕ":"МИР АКТИВЕН"):"НЕТ LIVE-СВЯЗИ";
   }requestAnimationFrame(draw);
 }
 poll();requestAnimationFrame(draw);

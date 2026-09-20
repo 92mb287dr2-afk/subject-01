@@ -1,13 +1,13 @@
 """Durable pre-birth runner. This module deliberately cannot declare a formal birth."""
-from collections import deque
 from copy import deepcopy
 import secrets
+import math
 import shutil
 import threading
 import time
 import uuid
 
-from .continuity import ContinuityStore, code_hash, digest
+from .continuity import ContinuityStore, code_hash, digest, encode
 from .core import SimulationConfig
 from .life import LifeCore, LAWS
 from .observer import ObserverRuntime
@@ -19,6 +19,7 @@ class CandidateRuntime(ObserverRuntime):
         self.metadata = metadata
         self.confirmations = {}
         self.closed = False
+        self.paused = False
 
     @classmethod
     def open(cls, data_dir, config=None):
@@ -62,10 +63,12 @@ class CandidateRuntime(ObserverRuntime):
         # Keep the previous confirmed state in memory until SQLite acknowledges commit.
         state = self._state(core)
         try:
+            if len(encode(state)) > 8 * 1024 * 1024:
+                raise OSError("Checkpoint budget reached (8 MiB); technical pause, no memories deleted")
             self.store.commit(state, events, command)
-        except BaseException:
+        except BaseException as exc:
             # Even an ambiguous post-COMMIT failure stops execution, never retries a tick.
-            self.fatal_error = "Continuity write failed; stopped at last confirmed state. Restart to recover."
+            self.fatal_error = f"Continuity write failed: {exc}. Stopped at last confirmed state; restart to recover."
             self._running.clear()
             self._stop_requested.set()
             raise
@@ -109,12 +112,13 @@ class CandidateRuntime(ObserverRuntime):
         core = self.core
         frame.update(continuity=deepcopy(self.metadata),
                      model_graphs=dict(controller=self._model_graph(core.controller.model, "c"),
-                         researcher=self._model_graph(core.researcher.model.models[core.researcher.model.selected], "r")),
+                         researcher=self._model_graph(core.researcher.model, "r")),
                      development=dict(mode=core.body["mode"], health=core.body["health"],
                          material=core.body["material"], strength=core.body["strength"],
                          memories=len(core.memories), controller_error=core.controller.error,
                          researcher_error=core.researcher.error,
                          method=core.researcher.model.selected,
+                         channel_methods=core.researcher.model.channel_methods[:],
                          hypothesis=deepcopy(core.researcher.hypothesis),
                          repair=deepcopy(core.repair), resource_totals=deepcopy(core.resource_totals)))
         return frame
@@ -123,7 +127,7 @@ class CandidateRuntime(ObserverRuntime):
     def _model_graph(model, prefix):
         trace = model.last_trace
         features = trace["features"] if trace else [0.0] * 21
-        weights = trace["weights"] if trace else model.weights
+        weights = trace["weights"] if trace else (model.weights if hasattr(model, "weights") else model.models[1].weights)
         result = trace["result"] if trace else [0.0] * 16
         nodes = [dict(id=f"{prefix}i{i}", group="sensor" if i < 16 else "motor" if i < 20 else "hidden",
                       value=value) for i, value in enumerate(features)]
@@ -150,10 +154,25 @@ class CandidateRuntime(ObserverRuntime):
         deadline = time.monotonic()
         while self._running.is_set():
             deadline += self.core.config.dt
-            self.advance()
+            with self._lock:
+                if not self.paused:
+                    self.advance()
             self._stop_requested.wait(max(0, deadline - time.monotonic()))
             if deadline < time.monotonic() - self.core.config.dt:
                 deadline = time.monotonic()  # no offline catch-up
+
+    def set_paused(self, paused):
+        with self._lock:
+            self._commit(self.core, [dict(kind="observer_paused" if paused else "observer_resumed",
+                                         source="observer", tick=self.core.tick_index)])
+            self.paused = paused
+            return dict(paused=paused)
+
+    def telemetry(self, after=-1):
+        with self._lock:
+            result = super().telemetry(after)
+            result["paused"] = self.paused
+            return result
 
     def save_snapshot(self):
         with self._lock:
@@ -178,28 +197,69 @@ class CandidateRuntime(ObserverRuntime):
     def _target(self, operation, target):
         if operation == "destroy_kernel" and target == "kernel":
             return deepcopy(self.core.kernel)
-        if operation == "delete_memory" and type(target) is int:
+        if operation in ("delete_memory", "replace_memory") and type(target) is int:
             record = next((m for m in self.core.memories if m["memory_id"] == target), None)
             if record:
                 return deepcopy(record)
-        raise ValueError("Supported exceptional targets: kernel destruction or an existing memory ID")
+        if operation == "edit_recovery_policy" and target == "kernel":
+            return deepcopy(self.core.kernel["policy"])
+        if operation == "edit_model_weights":
+            if target == "controller":
+                return deepcopy(self.core.controller.model.weights)
+            if target in ("researcher-0", "researcher-1", "researcher-2"):
+                return deepcopy(self.core.researcher.model.models[int(target[-1])].weights)
+        raise ValueError("Unknown protected operation or target")
 
-    def preview_override(self, operation, target):
+    def _replacement(self, operation, replacement):
+        def finite(value, low, high):
+            return type(value) in (int, float) and math.isfinite(value) and low <= value <= high
+        if operation == "replace_memory":
+            if not isinstance(replacement, dict) or set(replacement) != {"sensors", "action", "tick"}:
+                raise ValueError("Memory replacement requires sensors, action, tick")
+            if (not isinstance(replacement["sensors"], list) or len(replacement["sensors"]) != 16
+                or not all(finite(v, 0, 1) for v in replacement["sensors"])
+                or not isinstance(replacement["action"], list) or len(replacement["action"]) != 4
+                or not all(finite(v, -1, 1) for v in replacement["action"])
+                or type(replacement["tick"]) is not int or not 0 <= replacement["tick"] <= self.core.tick_index):
+                raise ValueError("Invalid numeric memory representation")
+        elif operation == "edit_recovery_policy":
+            bounds = dict(energy_flow=(.05, 2), material_flow=(.001, 1),
+                          health_threshold=(.3, 1), energy_threshold=(.2, 1))
+            if not isinstance(replacement, dict) or set(replacement) != set(bounds) or not all(
+                    finite(replacement[key], *bounds[key]) for key in bounds):
+                raise ValueError("Recovery policy requires finite supported resource flows and thresholds")
+        elif operation == "edit_model_weights":
+            if (not isinstance(replacement, list) or len(replacement) != 16 or not all(
+                    isinstance(row, list) and len(row) == 21 and all(finite(v, -2, 2) for v in row)
+                    for row in replacement)):
+                raise ValueError("Model weights must be a finite 16 x 21 matrix in [-2,2]")
+        elif replacement is not None:
+            raise ValueError("This operation does not accept replacement content")
+        return deepcopy(replacement)
+
+    def preview_override(self, operation, target, replacement=None):
         with self._lock:
             current = self._target(operation, target)
+            replacement = self._replacement(operation, replacement)
             token = secrets.token_urlsafe(32)
             self.confirmations = {k: v for k, v in self.confirmations.items() if v["expires"] > time.monotonic()}
             if len(self.confirmations) >= 16:
                 raise ValueError("Too many outstanding confirmations")
             self.confirmations[token] = dict(operation=operation, target=target,
                 checksum=digest(current), expires=time.monotonic() + 60,
-                origin_id=self.metadata["origin_id"])
+                origin_id=self.metadata["origin_id"], replacement=replacement)
             self._commit(self.core, [dict(kind="observer_override_previewed", source="observer",
-                                         operation=operation, target=target, prior_hash=digest(current))])
-            consequence = ("Ядро будет уничтожено. Возобновление и автоматическая замена запрещены."
-                           if target == "kernel" else "Указанное защищённое воспоминание будет удалено без восстановления.")
+                                         operation=operation, target=target, prior_hash=digest(current),
+                                         replacement=replacement)])
+            consequence = {
+                "destroy_kernel": "Ядро будет уничтожено. Возобновление и автоматическая замена запрещены.",
+                "delete_memory": "Указанное защищённое воспоминание будет удалено без восстановления.",
+                "replace_memory": "Содержание указанного воспоминания будет заменено внешним вмешательством.",
+                "edit_recovery_policy": "Будут изменены защищённые правила восстановления и расход ресурсов.",
+                "edit_model_weights": "Усвоенная модель будет изменена извне; это не результат самостоятельного обучения."
+            }[operation]
             return dict(token=token, operation=operation, target=target, expires_in_seconds=60,
-                        target_hash=digest(current), consequence=consequence,
+                        target_hash=digest(current), replacement=replacement, consequence=consequence,
                         required_confirmation="ПОДТВЕРЖДАЮ " + operation + " " + str(target))
 
     def confirm_override(self, token, confirmation):
@@ -216,10 +276,22 @@ class CandidateRuntime(ObserverRuntime):
             core = LifeCore.from_state(self.core.state())
             if operation == "destroy_kernel":
                 core.kernel["intact"] = False
-            else:
+            elif operation == "delete_memory":
                 core.memories = [m for m in core.memories if m["memory_id"] != target]
+            elif operation == "replace_memory":
+                memory = next(m for m in core.memories if m["memory_id"] == target)
+                memory["representation"] = deepcopy(grant["replacement"])
+                memory["integrity_hash"] = digest({k: v for k, v in memory.items() if k != "integrity_hash"})
+            elif operation == "edit_recovery_policy":
+                core.kernel["policy"] = deepcopy(grant["replacement"])
+            else:
+                model = (core.controller.model if target == "controller" else
+                         core.researcher.model.models[int(target[-1])])
+                model.weights = deepcopy(grant["replacement"])
+                model.last_trace = None
             audit = dict(kind="observer_override_confirmed", source="observer", operation=operation,
-                         target=target, prior_hash=grant["checksum"], tick=core.tick_index)
+                         target=target, prior_hash=grant["checksum"], tick=core.tick_index,
+                         replacement=grant["replacement"])
             self._commit(core, [audit])
             self.frames.clear()
             if operation == "destroy_kernel":

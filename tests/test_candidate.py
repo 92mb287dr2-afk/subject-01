@@ -259,6 +259,117 @@ r.advance()
             for edge in graph["edges"]:
                 self.assertEqual(edge["signal"], edge["weight"] * values[edge["source"]], name)
 
+    def test_structural_growth_requires_trial_and_failure_costs_forward_repair(self):
+        core = LifeCore()
+        for _ in range(80):
+            core.step()
+        p = core.brain.proposal
+        self.assertIsNotNone(p)
+        self.assertEqual(p["phase"], "model_trial")
+        edge_id = p["source"] + ":" + p["target"]
+        self.assertNotIn(edge_id, [e["id"] for e in core.brain.edges])
+        material_spent = core.resource_totals["material_out"]
+        core.step()
+        self.assertIn(edge_id, [e["id"] for e in core.brain.edges])
+        self.assertGreater(core.resource_totals["material_out"], material_spent)
+        tick = core.tick_index
+        # Force a physically observable prediction failure, not a mock UI event.
+        core.brain.previous_prediction = [-5.0] * 8
+        core.step()
+        self.assertEqual(core.brain.proposal["phase"], "repairing")
+        spent = core.resource_totals["material_out"]
+        for _ in range(LAWS["edge_repair_ticks"]):
+            core.step()
+        self.assertGreater(core.tick_index, tick)
+        self.assertGreater(core.resource_totals["material_out"], spent)
+        self.assertNotIn(edge_id, [e["id"] for e in core.brain.edges])
+
+    def test_numeric_channel_permutation_does_not_supply_a_body_dictionary(self):
+        order = list(reversed(range(16)))
+        a, b = ActionModel(), ActionModel()
+        sensors, action = [.1 + i * .04 for i in range(16)], [.2, -.4, .6, -.1]
+        following = [min(1, v + action[i % 4] * .03) for i, v in enumerate(sensors)]
+        for _ in range(100):
+            a.learn(sensors, action, following)
+            b.learn([sensors[i] for i in order], action, [following[i] for i in order])
+        prediction = a.predict(sensors, action)
+        permuted = b.predict([sensors[i] for i in order], action)
+        for i in range(16):
+            self.assertAlmostEqual(permuted[i], prediction[order[i]], places=12)
+
+    def test_protected_edits_are_exact_audited_and_persisted(self):
+        r = self.runtime()
+        r.advance()
+        replacement = dict(sensors=[.25] * 16, action=[0.0] * 4, tick=1)
+        grant = r.preview_override("replace_memory", 1, replacement)
+        self.assertNotEqual(r.core.memories[0]["representation"], replacement)
+        r.confirm_override(grant["token"], grant["required_confirmation"])
+        self.assertEqual(r.core.memories[0]["representation"], replacement)
+        policy = dict(energy_flow=.3, material_flow=.02, health_threshold=.8, energy_threshold=.7)
+        grant = r.preview_override("edit_recovery_policy", "kernel", policy)
+        r.confirm_override(grant["token"], grant["required_confirmation"])
+        weights = [[.1] * 21 for _ in range(16)]
+        grant = r.preview_override("edit_model_weights", "controller", weights)
+        r.confirm_override(grant["token"], grant["required_confirmation"])
+        self.assertEqual(r.core.controller.model.weights, weights)
+        with self.assertRaises(ValueError):
+            r.preview_override("edit_model_weights", "controller", [[float("nan")] * 21] * 16)
+        with self.assertRaises(ValueError):
+            r.preview_override("edit_recovery_policy", "kernel", {**policy, "energy_flow": 0})
+        r.stop()
+        r = self.runtime()
+        self.assertEqual(r.core.kernel["policy"], policy)
+        self.assertEqual(r.core.controller.model.weights, weights)
+        self.assertEqual(r.core.memories[0]["representation"], replacement)
+        events = [e for batch in r.store.journal() for e in batch["events"]]
+        audit = [e for e in events if e["kind"] == "observer_override_confirmed"]
+        self.assertEqual(len(audit), 3)
+        self.assertEqual(audit[-1]["replacement"], weights)
+
+    def test_paused_edit_and_changed_target_rejection(self):
+        r = self.runtime()
+        r.start()
+        r.set_paused(True)
+        tick = r.core.tick_index
+        time.sleep(.12)
+        self.assertEqual(r.core.tick_index, tick)
+        self.assertTrue(r.telemetry()["paused"])
+        weights = [[.1] * 21 for _ in range(16)]
+        first = r.preview_override("edit_model_weights", "controller", weights)
+        second = r.preview_override("edit_model_weights", "controller", [[.2] * 21 for _ in range(16)])
+        r.confirm_override(second["token"], second["required_confirmation"])
+        with self.assertRaisesRegex(ValueError, "exact target"):
+            r.confirm_override(first["token"], first["required_confirmation"])
+        r.set_paused(False)
+        deadline = time.monotonic() + 2
+        while r.core.tick_index == tick and time.monotonic() < deadline:
+            time.sleep(.02)
+        self.assertGreater(r.core.tick_index, tick)
+
+    def test_model_journal_reconstructs_each_inference_and_weight_exactly(self):
+        from subject01.audit import ModelAudit
+        r = self.runtime()
+        for _ in range(8):
+            r.advance()
+        grant = r.preview_override("edit_model_weights", "controller", [[.1] * 21 for _ in range(16)])
+        r.confirm_override(grant["token"], grant["required_confirmation"])
+        for _ in range(8):
+            r.advance()
+        audit = ModelAudit().check_store(r.store)
+        self.assertGreater(audit.inferences, 80)
+        self.assertEqual(audit.models["controller"]["weights"], r.core.controller.model.weights)
+        for i, model in enumerate(r.core.researcher.model.models):
+            self.assertEqual(audit.models[f"researcher-{i}"]["weights"], model.weights)
+
+    def test_consolidated_memory_is_recalled_as_a_real_action_candidate(self):
+        core = LifeCore()
+        core.step()
+        core.step()
+        events = [e for e in core.last_neural_events if e["kind"] == "memory_recalled"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["memory_id"], core.memories[0]["memory_id"])
+        self.assertEqual(events[0]["action_candidate"], core.memories[0]["representation"]["action"])
+
     def test_no_silent_legacy_migration_corruption_or_code_change(self):
         (self.path / "latest.snapshot.json").write_text("{}")
         with self.assertRaises(ValueError):

@@ -6,6 +6,7 @@ from subject01.core import DeterministicRng, SimulationConfig
 from subject01.development import ActionModel, AdaptiveModel
 from subject01.life import LifeCore
 from subject01.organism import clip
+from subject01.continuity import code_hash, digest
 
 
 def mse(predicted, observed):
@@ -56,7 +57,7 @@ def evaluate():
                          selected_methods=selections))
     embodied = sum(r["embodied_error_ratio"] for r in rows) / len(rows)
     methods = sum(r["adaptive_error_ratio"] for r in rows) / len(rows)
-    return dict(protocol=protocol, results=rows, embodied_mean_ratio=embodied,
+    return dict(code_hash=code_hash(), protocol_hash=digest(protocol), protocol=protocol, results=rows, embodied_mean_ratio=embodied,
                 adaptive_mean_ratio=methods,
                 passed=embodied <= protocol["embodied_max_mean_error_ratio_to_frozen"]
                 and methods <= protocol["method_max_mean_error_ratio_to_fixed"])

@@ -68,3 +68,16 @@ Initial local validation: 35 tests pass; browser tests await CI. Preregistered l
 model experiments pass their mean-error thresholds, with per-seed results and scope
 in [docs/RELEASE_STATUS.md](docs/RELEASE_STATUS.md). Structural network development,
 complete observer edits, full-organism experiments, and long-duration budgets remain open.
+
+## 2026-09-20 — Structural trials, recall, protected edits, transfer result
+
+Implemented model-checked structural growth, gradual probation and resource-costed
+forward repair. Added actual episodic recall, technical pause, exact-target protected
+memory/model/recovery-policy edits, and exact action-model journal reconstruction.
+Local engineering suite: 41 passed, 2 opt-in browser tests delegated to CI.
+
+Whole-core transfer initially passed before recall (ratio 0.871711), but failed once
+memory was actually used (1.030853). Per-channel method adaptation was then evaluated
+on reserved new seeds and a different actuator permutation: ratio 0.979814 versus
+the preregistered maximum 0.95. C18 remains failed; no threshold was relaxed.
+CI now exposes this failure as a separate research gate. No formal birth occurred.

@@ -38,3 +38,23 @@ jobs:
         with:
           name: observer-browser-screenshots
           path: test-artifacts/
+
+  research-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e .
+      - run: mkdir -p test-artifacts
+      - name: Unseen whole-organism transfer gate
+        run: python experiments/evaluate_organism.py --protocol experiments/transfer_validation_protocol.json > test-artifacts/transfer-validation.json
+      - name: Report measured transfer result
+        if: always()
+        run: cat test-artifacts/transfer-validation.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: whole-organism-transfer-report
+          path: test-artifacts/transfer-validation.json

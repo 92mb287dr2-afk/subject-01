@@ -34,7 +34,7 @@ class ActionModel:
                   for i, row in enumerate(self.weights)]
         self.last_trace = dict(features=x, weights=deepcopy(self.weights), result=result[:])
         self.events.append(dict(kind="model_inference", weights_version=self.samples,
-                                features=x, result=result[:]))
+                                features=x, sensors=list(sensors), result=result[:]))
         return result
 
     def learn(self, sensors, action, following):
@@ -69,24 +69,49 @@ class AdaptiveModel:
         self.models = [ActionModel(rate) for rate in (.04, .25, .9)]
         self.losses = [0.0, 0.0, 0.0]
         self.selected = 1
+        self.channel_losses = [[0.0] * CHANNELS for _ in range(3)]
+        self.channel_methods = [1] * CHANNELS
+        self.last_trace = None
+        self.error = 0.0
         self.adaptive = adaptive
         self.samples = 0
 
     def predict(self, sensors, action):
-        return self.models[self.selected].predict(sensors, action)
+        predictions = [model.predict(sensors, action) for model in self.models]
+        result = [predictions[self.channel_methods[i]][i] for i in range(CHANNELS)]
+        self._trace(result)
+        return result
+
+    def _trace(self, result):
+        self.last_trace = dict(features=self.models[0].last_trace["features"][:],
+            weights=[self.models[self.channel_methods[i]].last_trace["weights"][i][:] for i in range(CHANNELS)],
+            result=result[:], methods=self.channel_methods[:])
 
     def learn(self, sensors, action, following):
         errors = [model.learn(sensors, action, following) for model in self.models]
+        channel_errors = [[(following[i] - model.last_trace["result"][i]) ** 2
+                           for i in range(CHANNELS)] for model in self.models]
+        observed_error = sum(channel_errors[self.channel_methods[i]][i] for i in range(CHANNELS)) / CHANNELS
+        self._trace([self.models[self.channel_methods[i]].last_trace["result"][i] for i in range(CHANNELS)])
+        self.error = observed_error
         self.losses = [.96 * old + .04 * new for old, new in zip(self.losses, errors)]
+        self.channel_losses = [[.96 * old + .04 * new for old, new in zip(row, current)]
+                               for row, current in zip(self.channel_losses, channel_errors)]
         self.samples += 1
-        old = self.selected
+        old = self.channel_methods[:]
         if self.adaptive and self.samples % 32 == 0:
+            # Distinct numeric channels have different dynamics. A single global
+            # winner lets an energy transient dictate every motor-related rate.
+            self.channel_methods = [min(range(3), key=lambda m: self.channel_losses[m][i])
+                                    for i in range(CHANNELS)]
             self.selected = min(range(3), key=lambda i: self.losses[i])
-        return errors[old], old != self.selected
+        return observed_error, old != self.channel_methods
 
     def state(self):
         return dict(models=[m.state() for m in self.models], losses=self.losses[:],
-                    selected=self.selected, adaptive=self.adaptive, samples=self.samples)
+                    selected=self.selected, adaptive=self.adaptive, samples=self.samples,
+                    channel_losses=deepcopy(self.channel_losses), channel_methods=self.channel_methods[:],
+                    last_trace=deepcopy(self.last_trace), error=self.error)
 
     @classmethod
     def restore(cls, state):
@@ -94,6 +119,9 @@ class AdaptiveModel:
         obj.models = [ActionModel.restore(m) for m in state["models"]]
         obj.losses = state["losses"][:]
         obj.selected, obj.samples = state["selected"], state["samples"]
+        obj.channel_losses = deepcopy(state["channel_losses"])
+        obj.channel_methods = state["channel_methods"][:]
+        obj.last_trace, obj.error = deepcopy(state["last_trace"]), state["error"]
         return obj
 
 
@@ -105,6 +133,7 @@ class MainController:
         self.action = [0.0] * MOTORS
         self.error = 0.0
         self.weights = [.45, .35, .20]  # novelty, predicted change, effort
+        self.recall_id = None
 
     def observe(self, sensors):
         sensors = vector(sensors, CHANNELS)
@@ -114,8 +143,24 @@ class MainController:
             novelty = clip(.45 - self.error * 2, .2, .5)
             self.weights = [novelty, .35, .65 - novelty]
 
-    def propose(self, sensors, neural_motors):
+    def recall(self, sensors, memories):
+        """Bounded attention over protected numeric experience, never observer labels."""
+        self.recall_id = None
+        if not memories:
+            return None
+        indices = {len(memories) - 1}
+        for _ in range(min(16, len(memories))):
+            indices.add(min(len(memories) - 1, int(self.rng.uniform(0, len(memories)))))
+        index = min(sorted(indices), key=lambda i: sum(
+            (a - b) ** 2 for a, b in zip(sensors, memories[i]["representation"]["sensors"])))
+        memory = memories[index]
+        self.recall_id = memory["memory_id"]
+        return memory["representation"]["action"][:]
+
+    def propose(self, sensors, neural_motors, recalled_action=None):
         candidates = [list(neural_motors), [self.rng.uniform(-.7, .7) for _ in range(MOTORS)]]
+        if recalled_action is not None:
+            candidates.append(list(vector(recalled_action, MOTORS)))
         best = None
         for action in candidates:
             prediction = self.model.predict(sensors, action)
@@ -133,14 +178,14 @@ class MainController:
 
     def state(self):
         return dict(model=self.model.state(), rng=self.rng.state, previous=self.previous,
-                    action=self.action, error=self.error, weights=self.weights)
+                    action=self.action, error=self.error, weights=self.weights, recall_id=self.recall_id)
 
     @classmethod
     def restore(cls, state):
         obj = cls(1)
         obj.model = ActionModel.restore(state["model"])
         obj.rng.state = state["rng"]
-        for name in ("previous", "action", "error", "weights"):
+        for name in ("previous", "action", "error", "weights", "recall_id"):
             setattr(obj, name, deepcopy(state[name]))
         return obj
 
@@ -164,6 +209,7 @@ class InternalResearcher:
             if changed:
                 events.append(dict(kind="method_changed", source="researcher",
                                    method="learning_rate_selection", selected=self.model.selected,
+                                   channel_methods=self.model.channel_methods[:],
                                    prequential_losses=self.model.losses[:]))
             self.exploration = clip(.2 + math.sqrt(self.error), .2, .6)
         if self.hypothesis is None and tick % 100 == 0 and self.model.samples >= 64:

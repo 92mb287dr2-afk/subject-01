@@ -9,4 +9,5 @@ build/
 .DS_Store
 
 data-observer/
+data-candidate/
 test-artifacts/
