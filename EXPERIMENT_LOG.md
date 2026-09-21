@@ -140,3 +140,40 @@ Source f78747d passes all four GitHub CI jobs: 49 engineering tests on Linux and
 Windows, real Chromium scenarios, and transfer ratio 0.868842. Final source hash
 923cfe3c7aecee18a5ce768cf77f0d0a66c450e88f5c22bc83e35364a15c54cb
 matches local soak and independently repeated CI transfer. No birth occurred.
+
+## 2026-09-21 — Release acceptance and bounded archive access
+
+Normal runtime now uses a disk-backed memory sequence, a disk-based positional
+index, an incremental memory root, and an LRU of at most 128 records. Edits and
+deletions reindex by streaming. The observer pages records and exports a consistent
+SQLite snapshot without loading the complete archive. A 26,000-record and a
+104,000-record restore both peak at about 257 KB of new Python allocations;
+native SQLite caches are separately capped (4 MiB main, 2 MiB temp). This is not
+total process RSS. Recall trajectories match the in-memory implementation.
+
+Offline journal offload writes and fsyncs a pack, reads it back, then atomically
+replaces database payloads with offsets into that pack. Real process crashes at
+five transfer boundaries preserve the complete chain. Missing/truncated packs
+refuse startup rather than dropping history. Confirmed body resource edits are
+accounted explicitly; sensory-network weights can also be edited with audit.
+
+Single-identity birth has a per-user registration, an explicit code/laws-pinned
+release report and a separate owner phrase. Crash retries finish the same reserved
+identity exactly once; a diagnostic history cannot be promoted, a destroyed kernel
+cannot be replaced. Test birth cases use isolated temporary authorities, not the
+owner's official identity. The launcher defaults to a demo before birth and to
+continuation afterwards. Candidate-only code upgrades preserve experience with
+explicit confirmation; official life has no such upgrade bypass.
+
+Post-COMMIT acknowledgement loss is now handled explicitly: mixed state reads and
+same-process restarts are blocked until reopening durable continuity. The final
+source hash fa655308b1359fbc30cec7860dc2bca30ff2d9ccfc406a033127811f4cea12a8
+passed 61 engineering tests on both Windows and Linux, two Chromium scenarios,
+and the transfer gate (0.868842) in CI run 35626913540. Its final soak passed
+10,000 ticks/ten exact restarts, chain integrity and resource balance: mean
+33.24 ms, last 1,000 mean 32.48 ms, p95 69.28 ms, max 381.85 ms. The mean budget
+passes; strict real-time does not. Journal projection remains 6.18 GB/day at 20 Hz.
+
+The packaged release report enables preparation of first birth for this exact
+validated code. It does not execute birth. Owner decision under C22 remains a
+separate interaction after reviewing docs/RELEASE_ACCEPTANCE.md and OPERATIONS.md.
