@@ -129,3 +129,14 @@ last 1,000 mean 33.57 ms, 36.57 MB on disk, but p95 58.12 ms and max 1,330.78 ms
 To limit work per transaction, archive blocks were reduced from 256 to 32 batches,
 with 64 hot batches retained. Indexed cursor seeks still read old 256-batch blocks;
 a compatibility test covers that boundary. The original soak report is retained.
+
+The 32-batch replay completed 10,000 ticks, ten exact restart comparisons, full
+journal verification and resource balances. Mean 31.62 ms, final 1,000 mean
+32.47 ms, max 241.07 ms, p95 59.89 ms: the mean budget passes, strict per-tick
+real time does not. There are 303 memories and 310 lossless archive blocks;
+working checkpoint 127,389 bytes versus full export 295,800 bytes, disk 35.79 MB,
+projection 6.18 GB/day at 20 Hz. Full report: endurance-storage-small-blocks.json.
+Source f78747d passes all four GitHub CI jobs: 49 engineering tests on Linux and
+Windows, real Chromium scenarios, and transfer ratio 0.868842. Final source hash
+923cfe3c7aecee18a5ce768cf77f0d0a66c450e88f5c22bc83e35364a15c54cb
+matches local soak and independently repeated CI transfer. No birth occurred.
