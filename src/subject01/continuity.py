@@ -148,6 +148,7 @@ class ContinuityStore:
         self.db = None
         self.memory_cache = OrderedDict()
         self.memory_view = None
+        self.commit_uncertain = False
         self.fault_hook = lambda phase: None  # tests inject real process termination here
         try:
             if any((self.data_dir / name).exists() for name in
@@ -163,6 +164,7 @@ class ContinuityStore:
             self.db.execute("PRAGMA temp_store=FILE")
             self.db.execute("PRAGMA cache_size=-4096")
             self.db.execute("CREATE TEMP TABLE memory_positions(position INTEGER PRIMARY KEY, memory_id INTEGER UNIQUE)")
+            self.db.execute("PRAGMA temp.cache_size=-2048")
             if existing:
                 if self.db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                     raise ValueError("Continuity integrity check failed; no reset performed")
@@ -196,13 +198,16 @@ class ContinuityStore:
 
     @contextmanager
     def transaction(self):
+        self.commit_uncertain = False
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self.fault_hook("after_begin")
             yield
             self.fault_hook("before_commit")
             self.db.execute("COMMIT")
+            self.commit_uncertain = True
         except BaseException:
+            self.commit_uncertain = not self.db.in_transaction
             if self.db.in_transaction:
                 self.db.execute("ROLLBACK")
             raise

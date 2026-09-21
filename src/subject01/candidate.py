@@ -22,6 +22,7 @@ class CandidateRuntime(ObserverRuntime):
         self.confirmations = {}
         self.closed = False
         self.paused = False
+        self.continuity_unavailable = False
 
     @classmethod
     def open(cls, data_dir, config=None):
@@ -61,6 +62,8 @@ class CandidateRuntime(ObserverRuntime):
             raise
 
     def _state(self, core=None, copy_memory=True):
+        if self.continuity_unavailable:
+            raise RuntimeError("Commit outcome requires reopening; mixed state inspection is forbidden")
         state = (core or self.core).state(copy_memory=copy_memory)
         state["continuity"] = deepcopy(self.metadata)
         return state
@@ -77,6 +80,8 @@ class CandidateRuntime(ObserverRuntime):
 
     def memory_page(self, after=0, limit=100):
         with self._lock:
+            if self.continuity_unavailable:
+                raise RuntimeError("Reopen the runtime before reading memory")
             if self.store.format != 2:
                 rows = [m for m in self.core.memories if m["memory_id"] > after][:limit]
             else:
@@ -87,11 +92,14 @@ class CandidateRuntime(ObserverRuntime):
                         cursor=rows[-1]["memory_id"] if rows else after)
 
     def _commit(self, core, events, command=None):
+        if self.fatal_error:
+            raise RuntimeError("Reopen the runtime after a continuity failure")
         # Keep the previous confirmed state in memory until SQLite acknowledges commit.
         state = self._state(core, copy_memory=False)
         try:
             self.store.commit(state, events, command)
         except BaseException as exc:
+            self.continuity_unavailable = self.store.commit_uncertain
             # Even an ambiguous post-COMMIT failure stops execution, never retries a tick.
             self.fatal_error = f"Continuity write failed: {exc}. Stopped at last confirmed state; restart to recover."
             self._running.clear()
@@ -167,6 +175,8 @@ class CandidateRuntime(ObserverRuntime):
     def start(self):
         if self.closed:
             raise RuntimeError("Runtime is closed")
+        if self.fatal_error:
+            raise RuntimeError("Reopen the runtime after a continuity failure")
         if self._running.is_set():
             return
         if not self.core.kernel["intact"]:

@@ -10,6 +10,32 @@ from subject01.life import LifeCore
 
 
 class PagedMemoryTests(unittest.TestCase):
+    def test_ambiguous_post_commit_failure_blocks_mixed_state_until_reopen(self):
+        with tempfile.TemporaryDirectory() as folder:
+            runtime = CandidateRuntime.open(folder)
+            runtime.advance()
+            grant = runtime.preview_override("delete_memory", 1)
+            def fail(phase):
+                if phase == "after_commit":
+                    raise OSError("acknowledgement lost")
+            runtime.store.fault_hook = fail
+            with self.assertRaises(OSError):
+                runtime.confirm_override(grant["token"], grant["required_confirmation"])
+            with self.assertRaises(RuntimeError):
+                runtime.status()
+            with self.assertRaises(RuntimeError):
+                runtime.memory_page()
+            with self.assertRaises(RuntimeError):
+                runtime.start()
+            runtime.stop()
+            runtime = CandidateRuntime.open(folder)
+            try:
+                self.assertEqual(len(runtime.core.memories), 0)
+                runtime.advance()
+                self.assertEqual(runtime.core.memories[0]["memory_id"], 2)
+            finally:
+                runtime.stop()
+
     def test_disk_and_list_recall_produce_identical_future(self):
         with tempfile.TemporaryDirectory() as folder:
             runtime = CandidateRuntime.open(folder)
