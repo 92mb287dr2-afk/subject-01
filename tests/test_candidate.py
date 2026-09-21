@@ -401,6 +401,23 @@ r.advance()
         with self.assertRaisesRegex(ValueError, "checksum"):
             self.runtime()
 
+    def test_owner_body_and_neural_edits_preserve_resource_accounting(self):
+        r = self.runtime()
+        r.advance()
+        body = r._target("edit_body", "body")
+        body.update(energy=.3, material=.8, health=.5)
+        grant = r.preview_override("edit_body", "body", body)
+        r.confirm_override(grant["token"], grant["required_confirmation"])
+        weights = {k: .1 for k in r._target("edit_neural_weights", "brain")}
+        grant = r.preview_override("edit_neural_weights", "brain", weights)
+        r.confirm_override(grant["token"], grant["required_confirmation"])
+        self.assertTrue(all(edge["weight"] == .1 for edge in r.core.brain.edges))
+        r.advance()
+        for name, initial in (("energy", 1), ("material", .5)):
+            totals = r.core.resource_totals
+            self.assertAlmostEqual(r.core.body[name], initial + totals[name + "_in"] - totals[name + "_out"] - totals[name + "_spill"])
+        self.assertEqual(r.core.memories[0]["memory_id"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

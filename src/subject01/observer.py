@@ -121,7 +121,23 @@ class ObserverHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/session":
                 self._send(200, {"token": self.server.token})
             elif parsed.path == "/api/state":
-                self._send(200, self.server.runtime.status())
+                runtime = self.server.runtime
+                self._send(200, runtime.status(memory_limit=100) if hasattr(runtime, "memory_page") else runtime.status())
+            elif parsed.path == "/api/memories" and hasattr(self.server.runtime, "memory_page"):
+                after = int(parse_qs(parsed.query).get("after", ["0"])[0])
+                self._send(200, self.server.runtime.memory_page(after))
+            elif parsed.path == "/api/memory-export" and hasattr(self.server.runtime.store, "memory_export"):
+                with self.server.runtime.store.memory_export() as (manifest, records):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/x-ndjson")
+                    self.send_header("Content-Disposition", 'attachment; filename="protected-memories.jsonl"')
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.wfile.write(json.dumps(manifest, allow_nan=False).encode() + b"\n")
+                    for record in records:
+                        self.wfile.write(json.dumps(record, allow_nan=False).encode() + b"\n")
+                    self.close_connection = True
             elif parsed.path == "/api/journal" and hasattr(self.server.runtime.store, "journal"):
                 after = int(parse_qs(parsed.query).get("after", ["0"])[0])
                 with self.server.runtime._lock:
@@ -241,11 +257,16 @@ class ObserverHandler(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description="Subject-01 live observer")
     parser.add_argument("--data-dir")
-    parser.add_argument("--candidate", action="store_true", help="Run the durable pre-birth candidate")
+    mode_args = parser.add_mutually_exclusive_group()
+    mode_args.add_argument("--candidate", action="store_true", help="Run the durable pre-birth candidate")
+    mode_args.add_argument("--subject", action="store_true", help="Resume the one registered official life")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
-    if args.candidate:
+    if args.subject:
+        from .birth import SubjectRuntime
+        runtime = SubjectRuntime.open(args.data_dir)
+    elif args.candidate:
         from .candidate import CandidateRuntime
         runtime = CandidateRuntime.open(args.data_dir or "./data-candidate", SimulationConfig())
     else:
@@ -257,8 +278,8 @@ def main():
         runtime.stop()
         raise
     url = f"http://127.0.0.1:{server.server_port}"
-    mode = "Durable candidate" if args.candidate else "Diagnostic model"
-    print(f"Observer: {url}\n{mode}, PRE-BIRTH. Ctrl+C saves and stops.", flush=True)
+    mode = "Subject-01 · LIVING" if args.subject else "PRE-BIRTH · " + ("Durable candidate" if args.candidate else "Diagnostic model")
+    print(f"Observer: {url}\n{mode}. Ctrl+C saves and stops.", flush=True)
     if not args.no_browser:
         webbrowser.open(url)
     try:

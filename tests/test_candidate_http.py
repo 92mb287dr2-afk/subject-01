@@ -36,6 +36,13 @@ def test_candidate_http_durable_commands_inspection_and_protection(candidate_ser
     state = json.load(urlopen(url + "/api/state"))
     assert state["continuity"]["origin_id"] == runtime.metadata["origin_id"]
     assert state["life"]["memories"]
+    assert state["life"]["memory_page"]["shown"] <= 100
+    memories = json.load(urlopen(url + "/api/memories?after=0"))
+    assert memories["records"][0]["memory_id"] == 1
+    with urlopen(url + "/api/memory-export") as response:
+        exported = [json.loads(line) for line in response.read().splitlines()]
+    assert exported[0]["kind"] == "memory_export"
+    assert exported[1]["memory_id"] == 1
     journal = json.load(urlopen(url + "/api/journal"))
     assert journal["cursor"] > 0
     with pytest.raises(HTTPError) as rejected:
@@ -83,6 +90,9 @@ def test_candidate_ui_layers_memory_mobile_and_reconnect(candidate_server):
         page.get_by_text("Исключительное вмешательство владельца", exact=True).click()
         page.locator("#inspectState").click()
         expect(page.locator("#fullState")).to_contain_text("integrity_hash")
+        page.locator("#firstMemories").click()
+        expect(page.locator("#memoryPage")).to_contain_text("integrity_hash")
+        expect(page.locator("#lifeStatus")).to_have_text("PRE-BIRTH")
         page.get_by_text("Полное состояние и защищённая память", exact=True).click()
         os.makedirs("test-artifacts", exist_ok=True)
         page.screenshot(path="test-artifacts/candidate-desktop.png", full_page=True)

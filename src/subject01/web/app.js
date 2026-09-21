@@ -147,7 +147,9 @@ function accept(data){
   $("developmentPanel").hidden=!state.development;
   $("graphLayer").disabled=!state.model_graphs;
   if(state.development){const d=state.development;
-    $("modeLabel").textContent="кандидат · допуск к рождению закрыт";
+    const living=state.continuity.status==="LIVING";
+    $("lifeStatus").textContent=living?"SUBJECT-01":"PRE-BIRTH";
+    $("modeLabel").textContent=living?"единственная зарегистрированная жизнь":"тестовая среда · первое рождение отдельно";
     $("bodyMode").textContent=d.mode==="RECOVERING"?"Восстановление тела":"Тело активно";
     $("origin").textContent=state.continuity.origin_id.slice(0,8);
     $("health").textContent=Math.round(d.health*100)+"%";$("material").textContent=fmt(d.material);
@@ -184,9 +186,13 @@ $("filter").onchange=renderEvents;
 $("pauseWorld").onclick=async()=>{try{await post(worldPaused?"/api/resume":"/api/pause",{});}catch(e){notice(e.message,true);}};
 $("graphLayer").onchange=()=>{locations={};pulses=[];selected=null;inspect();$("graphNote").textContent=$("graphLayer").value==="brain"?"Передачи сенсорной сети":$("graphLayer").value==="researcher"?"Составной прогноз исследователя · отдельный темп обучения каждого канала":"Последний вычисленный прогноз · импульсы = вход × вес";};
 $("inspectState").onclick=async()=>{try{const r=await fetch("/api/state");if(!r.ok)throw Error(r.status);$("fullState").textContent=JSON.stringify(await r.json(),null,2);}catch(e){notice(e.message,true);}};
+let memoryCursor=0;
+async function showMemories(after){try{const r=await fetch("/api/memories?after="+after);if(!r.ok)throw Error(r.status);const data=await r.json();memoryCursor=data.cursor;$("memoryPage").textContent=JSON.stringify(data,null,2);$("nextMemories").disabled=data.records.length<100;}catch(e){notice(e.message,true);}}
+$("firstMemories").onclick=()=>showMemories(0);
+$("nextMemories").onclick=()=>showMemories(memoryCursor);
 let overrideGrant=null;
 $("previewOverride").onclick=async()=>{try{const operation=$("overrideOperation").value;
-  const target=operation.includes("kernel")||operation==="edit_recovery_policy"?"kernel":operation==="edit_model_weights"?$("modelTarget").value:Number($("memoryTarget").value);
+  const target=operation==="edit_body"?"body":operation==="edit_neural_weights"?"brain":operation.includes("kernel")||operation==="edit_recovery_policy"?"kernel":operation==="edit_model_weights"?$("modelTarget").value:Number($("memoryTarget").value);
   const replacement=operation.startsWith("edit_")||operation==="replace_memory"?JSON.parse($("overrideReplacement").value):null;
   overrideGrant=await post("/api/override/preview",{operation,target,replacement});$("overridePreview").hidden=false;
   $("overrideConfirmation").value="";$("overrideConsequence").textContent=overrideGrant.consequence+" Новое содержание: "+JSON.stringify(overrideGrant.replacement)+". В течение 60 секунд введите: "+overrideGrant.required_confirmation;

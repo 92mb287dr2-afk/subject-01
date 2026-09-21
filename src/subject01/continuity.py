@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from collections import OrderedDict
+from collections.abc import Sequence
 from copy import deepcopy
 import hashlib
 from itertools import islice
@@ -9,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import uuid
 import zlib
 
 
@@ -63,6 +66,77 @@ class DirectoryLock:
         self.handle.close()
 
 
+class DiskMemories(Sequence):
+    """Numeric records loaded on demand; uncommitted appends belong to one step."""
+    def __init__(self, store, count, hasher, last_id=0):
+        self.store = store
+        self.count = count
+        self.hasher = hasher.copy()
+        self.last_id = last_id
+        self.pending = []
+        self.edits = {}
+        self.deleted = {}
+
+    def __len__(self):
+        return self.count - len(self.deleted) + len(self.pending)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return [self[i] for i in range(*index.indices(len(self))) ]
+        if index < 0:
+            index += len(self)
+        if not 0 <= index < len(self):
+            raise IndexError(index)
+        retained = self.count - len(self.deleted)
+        if index >= retained:
+            return deepcopy(self.pending[index - retained])
+        for position in sorted(self.deleted.values()):
+            if position <= index:
+                index += 1
+        record = self.store.memory_at(index)
+        return deepcopy(self.edits.get(record["memory_id"], record))
+
+    def __deepcopy__(self, memo):
+        return list(self)
+
+    def fork(self):
+        other = DiskMemories(self.store, self.count, self.hasher, self.last_id)
+        other.pending = deepcopy(self.pending)
+        other.edits, other.deleted = deepcopy(self.edits), self.deleted.copy()
+        return other
+
+    def change(self, memory_id, replacement=None):
+        row = self.store.db.execute("SELECT position FROM memory_positions WHERE memory_id=?", (memory_id,)).fetchone()
+        if row is None:
+            raise ValueError("Unknown memory")
+        if replacement is None:
+            self.deleted[memory_id] = row[0]
+        else:
+            self.edits[memory_id] = deepcopy(replacement)
+
+    def append(self, record):
+        if record["memory_id"] <= self.last_id:
+            raise ValueError("Protected memory IDs must increase")
+        if len(self):
+            self.hasher.update(b",")
+        self.hasher.update(encode([record["memory_id"], record["integrity_hash"]]))
+        self.pending.append(deepcopy(record))
+        self.last_id = record["memory_id"]
+
+    def manifest(self):
+        if self.edits or self.deleted:
+            h = hashlib.sha256(b"[")
+            for i, record in enumerate(self):
+                if i:
+                    h.update(b",")
+                h.update(encode([record["memory_id"], record["integrity_hash"]]))
+            h.update(b"]")
+            return dict(count=len(self), root=h.hexdigest())
+        h = self.hasher.copy()
+        h.update(b"]")
+        return dict(count=len(self), root=h.hexdigest())
+
+
 class ContinuityStore:
     FORMAT = 2
     ARCHIVE_BATCHES = 32
@@ -72,7 +146,8 @@ class ContinuityStore:
         self.data_dir = Path(directory).resolve()
         self.lock = DirectoryLock(self.data_dir)
         self.db = None
-        self._memories = {}
+        self.memory_cache = OrderedDict()
+        self.memory_view = None
         self.fault_hook = lambda phase: None  # tests inject real process termination here
         try:
             if any((self.data_dir / name).exists() for name in
@@ -85,6 +160,9 @@ class ContinuityStore:
             self.db.execute("PRAGMA journal_mode=WAL")
             self.db.execute("PRAGMA synchronous=FULL")
             self.db.execute("PRAGMA foreign_keys=ON")
+            self.db.execute("PRAGMA temp_store=FILE")
+            self.db.execute("PRAGMA cache_size=-4096")
+            self.db.execute("CREATE TEMP TABLE memory_positions(position INTEGER PRIMARY KEY, memory_id INTEGER UNIQUE)")
             if existing:
                 if self.db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                     raise ValueError("Continuity integrity check failed; no reset performed")
@@ -107,7 +185,11 @@ class ContinuityStore:
                 COMMIT;
                 """)
             self.format = self.db.execute("PRAGMA user_version").fetchone()[0]
-            self.load()
+            if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='archive_files'").fetchone():
+                for filename, required in self.db.execute("SELECT path,max(offset+size) FROM archive_files GROUP BY path"):
+                    if Path(filename).stat().st_size < required:
+                        raise ValueError("Truncated journal archive pack; state untouched")
+            self.load(lazy=True)
         except BaseException:
             self.close()
             raise
@@ -126,7 +208,7 @@ class ContinuityStore:
             raise
         self.fault_hook("after_commit")
 
-    def load(self):
+    def load(self, lazy=False):
         row = self.db.execute("SELECT payload,hash FROM checkpoint WHERE id=1").fetchone()
         if row is None:
             # An existing, empty schema can occur before the initial transaction.
@@ -141,24 +223,73 @@ class ContinuityStore:
         if last is None or state["continuity"]["journal_hash"] != last[0]:
             raise ValueError("Checkpoint / journal boundary mismatch")
         if self.format == 2:
-            records = []
-            for memory_id, payload, checksum in self.db.execute(
-                    "SELECT memory_id,payload,hash FROM memories ORDER BY memory_id"):
-                raw_memory = zlib.decompress(payload)
-                if hashlib.sha256(raw_memory).hexdigest() != checksum:
-                    raise ValueError("Protected memory checksum mismatch")
-                record = json.loads(raw_memory)
-                if record["memory_id"] != memory_id:
-                    raise ValueError("Protected memory identity mismatch")
-                if record["integrity_hash"] != digest(
-                        {k: v for k, v in record.items() if k != "integrity_hash"}):
-                    raise ValueError("Protected memory integrity failure")
-                records.append(record)
-            if self._memory_manifest(records) != state["life"].pop("memory_manifest"):
+            self._reindex_memories()
+            if self.memory_view.manifest() != state["life"].pop("memory_manifest"):
                 raise ValueError("Protected memory / checkpoint boundary mismatch")
-            state["life"]["memories"] = records
-            self._memories = {r["memory_id"]: deepcopy(r) for r in records}
+            state["life"]["memories"] = self.memory_view.fork() if lazy else list(self.memory_view)
         return state
+
+    @staticmethod
+    def _decode_memory(row):
+        memory_id, payload, checksum = row
+        raw = zlib.decompress(payload)
+        if hashlib.sha256(raw).hexdigest() != checksum:
+            raise ValueError("Protected memory checksum mismatch")
+        record = json.loads(raw)
+        if record["memory_id"] != memory_id:
+            raise ValueError("Protected memory identity mismatch")
+        if record["integrity_hash"] != digest({k: v for k, v in record.items() if k != "integrity_hash"}):
+            raise ValueError("Protected memory integrity failure")
+        return record
+
+    def _reindex_memories(self):
+        self.db.execute("DELETE FROM memory_positions")
+        self.memory_cache.clear()
+        h, count, last_id = hashlib.sha256(b"["), 0, 0
+        for row in self.db.execute("SELECT memory_id,payload,hash FROM memories ORDER BY memory_id"):
+            record = self._decode_memory(row)
+            if count:
+                h.update(b",")
+            h.update(encode([row[0], record["integrity_hash"]]))
+            self.db.execute("INSERT INTO memory_positions VALUES(?,?)", (count, row[0]))
+            count, last_id = count + 1, row[0]
+        self.memory_view = DiskMemories(self, count, h, last_id)
+
+    def memory_at(self, position):
+        if position in self.memory_cache:
+            self.memory_cache.move_to_end(position)
+            return deepcopy(self.memory_cache[position])
+        row = self.db.execute("SELECT m.memory_id,m.payload,m.hash FROM memory_positions p "
+                              "JOIN memories m ON m.memory_id=p.memory_id WHERE p.position=?", (position,)).fetchone()
+        if row is None:
+            raise ValueError("Protected memory position missing")
+        record = self._decode_memory(row)
+        self.memory_cache[position] = record
+        if len(self.memory_cache) > 128:
+            self.memory_cache.popitem(last=False)
+        return deepcopy(record)
+
+    @contextmanager
+    def memory_export(self):
+        """A read-only SQLite snapshot; no full archive or writer lock in RAM."""
+        reader = sqlite3.connect((self.data_dir / "continuity.sqlite3").as_uri() + "?mode=ro", uri=True)
+        try:
+            reader.execute("PRAGMA cache_size=-2048")
+            reader.execute("BEGIN")
+            row = reader.execute("SELECT payload,hash FROM checkpoint WHERE id=1").fetchone()
+            raw = zlib.decompress(row[0])
+            if hashlib.sha256(raw).hexdigest() != row[1]:
+                raise ValueError("Checkpoint checksum mismatch")
+            state = json.loads(raw)
+            if self.format != 2:
+                raise ValueError("Paged memory export requires storage format 2")
+            manifest = dict(kind="memory_export", tick=state["tick_index"],
+                            continuity=state["continuity"], memory_manifest=state["life"]["memory_manifest"])
+            records = (self._decode_memory(r) for r in reader.execute(
+                "SELECT memory_id,payload,hash FROM memories ORDER BY memory_id"))
+            yield manifest, records
+        finally:
+            reader.close()
 
     @staticmethod
     def _memory_manifest(records):
@@ -173,17 +304,23 @@ class ContinuityStore:
         records = state["life"]["memories"]
         compact = {**state, "life": {**state["life"]}}
         compact["life"].pop("memories")
-        compact["life"]["memory_manifest"] = self._memory_manifest(records)
+        lazy = isinstance(records, DiskMemories)
+        compact["life"]["memory_manifest"] = records.manifest() if lazy else self._memory_manifest(records)
         changed = []
-        for record in records:
-            if self._memories.get(record["memory_id"]) != record:
+        for record in (records.pending + list(records.edits.values())) if lazy else records:
+            raw = encode(record)
+            prior = self.db.execute("SELECT hash FROM memories WHERE memory_id=?", (record["memory_id"],)).fetchone() if self.format == 2 else None
+            if prior is None or prior[0] != hashlib.sha256(raw).hexdigest():
                 if record["integrity_hash"] != digest(
                         {k: v for k, v in record.items() if k != "integrity_hash"}):
                     raise ValueError("Protected memory integrity failure")
-                raw = encode(record)
                 changed.append((record["memory_id"], zlib.compress(raw),
                                 hashlib.sha256(raw).hexdigest(), deepcopy(record)))
-        removed = self._memories.keys() - {r["memory_id"] for r in records}
+        if lazy or self.format == 1:
+            removed = set(records.deleted) if lazy else set()
+        else:
+            ids = {r["memory_id"] for r in records}
+            removed = {row[0] for row in self.db.execute("SELECT memory_id FROM memories") if row[0] not in ids}
         return compact, changed, removed
 
     def _write_memories(self, changed, removed):
@@ -255,15 +392,85 @@ class ContinuityStore:
                             (state["tick_index"], zlib.compress(raw_state),
                              hashlib.sha256(raw_state).hexdigest()))
             self.fault_hook("after_checkpoint")
-        for memory_id in removed:
-            self._memories.pop(memory_id)
-        for memory_id, _, _, record in changed:
-            self._memories[memory_id] = record
+        if self.format == 2:
+            records = state["life"]["memories"]
+            if isinstance(records, DiskMemories) and not records.edits and not records.deleted:
+                for i, record in enumerate(records.pending, records.count):
+                    self.db.execute("INSERT INTO memory_positions VALUES(?,?)", (i, record["memory_id"]))
+                self.memory_view = DiskMemories(self, len(records), records.hasher, records.last_id)
+            else:
+                self._reindex_memories()
         return state
 
     def journal(self, after=0, limit=100):
         return [json.loads(raw) for _, raw, _, _ in
                 islice(self._journal_rows(after), min(max(limit, 1), 500))]
+
+    def offload_journal(self, destination):
+        """Offline pack export: fsync file before atomically replacing DB payloads.
+
+        Caller owns the directory's writer lock. A crash before the SQL commit
+        leaves an unreferenced pack, never a dangling committed reference.
+        """
+        if self.format != 2:
+            raise ValueError("Journal offload requires storage format 2")
+        destination = Path(destination).resolve()
+        destination.mkdir(parents=True, exist_ok=True)
+        pack = destination / ("subject01-" + uuid.uuid4().hex + ".pack")
+        # The bounded temporary SQL index avoids accumulating pack offsets in RAM.
+        self.db.execute("CREATE TEMP TABLE IF NOT EXISTS pack_offsets(first_seq INTEGER PRIMARY KEY, offset INTEGER, size INTEGER)")
+        self.db.execute("DELETE FROM pack_offsets")
+        count = 0
+        with pack.open("xb") as handle:
+            for first, payload, checksum in self.db.execute(
+                    "SELECT first_seq,payload,hash FROM journal_archives WHERE length(payload)>0 ORDER BY first_seq"):
+                if hashlib.sha256(zlib.decompress(payload)).hexdigest() != checksum:
+                    raise ValueError("Journal archive checksum mismatch")
+                self.db.execute("INSERT INTO pack_offsets VALUES(?,?,?)", (first, handle.tell(), len(payload)))
+                handle.write(payload)
+                count += 1
+            handle.flush()
+            os.fsync(handle.fileno())
+        if os.name != "nt":
+            fd = os.open(destination, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        self.fault_hook("after_pack_sync")
+        if not count:
+            pack.unlink()
+            return dict(blocks=0, bytes=0, pack=None)
+        with pack.open("rb") as handle:
+            for offset, size, checksum in self.db.execute(
+                    "SELECT p.offset,p.size,a.hash FROM pack_offsets p JOIN journal_archives a USING(first_seq)"):
+                handle.seek(offset)
+                if hashlib.sha256(zlib.decompress(handle.read(size))).hexdigest() != checksum:
+                    raise ValueError("Archive pack read-back verification failed; original retained")
+        with self.transaction():
+            self.db.execute("CREATE TABLE IF NOT EXISTS archive_files(first_seq INTEGER PRIMARY KEY, path TEXT NOT NULL, offset INTEGER NOT NULL, size INTEGER NOT NULL)")
+            self.db.execute("INSERT INTO archive_files SELECT first_seq,?,offset,size FROM pack_offsets", (str(pack),))
+            self.fault_hook("after_pack_references")
+            self.db.execute("UPDATE journal_archives SET payload=x'' WHERE first_seq IN (SELECT first_seq FROM pack_offsets)")
+            self.fault_hook("after_pack_release")
+        # Verify the committed indirection before reclaiming freed SQLite pages.
+        self.verify_journal()
+        self.db.execute("VACUUM")
+        self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return dict(blocks=count, bytes=pack.stat().st_size, pack=str(pack))
+
+    def _archive_payload(self, first, payload):
+        if payload:
+            return payload
+        row = self.db.execute("SELECT path,offset,size FROM archive_files WHERE first_seq=?", (first,)).fetchone()
+        if row is None:
+            raise ValueError("Missing journal archive reference")
+        with Path(row[0]).open("rb") as handle:
+            handle.seek(row[1])
+            payload = handle.read(row[2])
+        if len(payload) != row[2]:
+            raise ValueError("Truncated journal archive pack")
+        return payload
 
     def _archive_journal(self):
         """Lossless cross-batch compression, in the same transaction as the tick.
@@ -293,7 +500,7 @@ class ContinuityStore:
                     "SELECT first_seq,last_seq,payload,hash FROM journal_archives "
                     "WHERE first_seq>=? AND last_seq>? ORDER BY first_seq",
                     (max(1, after - 255), after)):
-                raw = zlib.decompress(payload)
+                raw = zlib.decompress(self._archive_payload(first, payload))
                 if hashlib.sha256(raw).hexdigest() != checksum:
                     raise ValueError("Journal archive checksum mismatch")
                 rows = json.loads(raw)
@@ -329,11 +536,19 @@ class ContinuityStore:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Explicit continuity storage maintenance")
-    parser.add_argument("--migrate-memory-layout", required=True, metavar="DATA_DIRECTORY")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--migrate-memory-layout", metavar="DATA_DIRECTORY")
+    group.add_argument("--offload-journal", metavar="DATA_DIRECTORY")
+    parser.add_argument("--destination", help="Permanent directory on the archive drive")
     args = parser.parse_args()
-    store = ContinuityStore(args.migrate_memory_layout)
+    if args.offload_journal and not args.destination:
+        parser.error("--offload-journal requires --destination")
+    store = ContinuityStore(args.migrate_memory_layout or args.offload_journal)
     try:
-        store.migrate_memory_layout()
-        print("Memory layout: 2. Identity, code hash, laws and journal unchanged.")
+        if args.offload_journal:
+            print(json.dumps(store.offload_journal(args.destination), indent=2))
+        else:
+            store.migrate_memory_layout()
+            print("Memory layout: 2. Identity, code hash, laws and journal unchanged.")
     finally:
         store.close()

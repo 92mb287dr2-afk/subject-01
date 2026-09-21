@@ -336,18 +336,18 @@ class LifeCore(ObserverCore):
         core = self.from_state(state)
         # Copy the index, not every immutable record. Exceptional edits use the full
         # from_state(state()) copy instead and cannot mutate a confirmed predecessor.
-        core.memories = self.memories[:]
+        core.memories = self.memories.fork() if hasattr(self.memories, "fork") else self.memories[:]
         return core
 
     @classmethod
-    def from_state(cls, state):
+    def from_state(cls, state, lazy_memory=False):
         life = state.get("life", {})
         if life.get("format") != LIFE_FORMAT or life.get("laws_hash") != digest(LAWS):
             raise ValueError("Incompatible life state/laws; no automatic replacement")
         core = SimulationCore.from_state.__func__(cls, state)
         for name in ("body", "experience", "memories", "salience", "kernel", "repair", "resource_totals", "neural_sequence", "next_memory_id"):
-            setattr(core, name, deepcopy(life[name]))
-        for record in core.memories:
+            setattr(core, name, life[name] if name == "memories" and lazy_memory else deepcopy(life[name]))
+        for record in (() if lazy_memory else core.memories):
             if record["integrity_hash"] != digest({k: v for k, v in record.items() if k != "integrity_hash"}):
                 raise ValueError("Protected memory integrity failure")
         core.brain = TrialNetwork.restore(life["brain"])

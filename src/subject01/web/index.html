@@ -5,7 +5,7 @@
 <header><div class="brand"><span class="mark">◈</span><div>CREATION <span>/ SUBJECT–01</span><small>ОБСЕРВАТОРИЯ · 001</small></div></div>
 <div class="connection"><i id="lamp"></i><span id="connection">Подключение…</span><span id="clock">00:00</span></div></header>
 <main>
-<section class="intro"><div><p class="eyebrow">МИР, КОТОРЫЙ ПРОДОЛЖАЕТСЯ</p><h1>Наблюдать. Не подсказывать.</h1><p>Среда, тело и сигналы сети — в одном окне.</p></div><div class="badge">PRE-BIRTH <small id="modeLabel">экспериментальная модель</small></div></section>
+<section class="intro"><div><p class="eyebrow">МИР, КОТОРЫЙ ПРОДОЛЖАЕТСЯ</p><h1>Наблюдать. Не подсказывать.</h1><p>Среда, тело и сигналы сети — в одном окне.</p></div><div class="badge"><span id="lifeStatus">PRE-BIRTH</span> <small id="modeLabel">экспериментальная модель</small></div></section>
 <div id="notice" role="status">Загрузка состояния…</div>
 <section class="workspace">
 <article class="panel world-panel"><div class="panel-head"><div><span class="eyebrow">01 / СРЕДА</span><h2>Тихая поляна</h2></div><span class="pill">ВИД СВЕРХУ · 2D</span></div>
@@ -23,9 +23,9 @@
 <section class="panel" id="developmentPanel" hidden><div class="panel-head"><div><span class="eyebrow">03 / РАЗВИТИЕ И ПАМЯТЬ</span><h2 id="bodyMode">Состояние тела</h2></div><span class="pill" id="origin"></span></div>
 <div class="metrics"><div><small>ЦЕЛОСТНОСТЬ</small><strong id="health">—</strong></div><div><small>МАТЕРИАЛ</small><strong id="material">—</strong></div><div><small>СИЛА ТЕЛА</small><strong id="strength">—</strong></div><div><small>ВОСПОМИНАНИЯ</small><strong id="memories">—</strong></div></div>
 <p id="hypothesis" class="development-text"></p><p id="modelErrors" class="development-text"></p>
-<details class="development-text"><summary>Полное состояние и защищённая память</summary><button id="inspectState">Получить подтверждённое состояние</button><pre id="fullState"></pre></details>
+<details class="development-text"><summary>Полное состояние и защищённая память</summary><button id="inspectState">Получить подтверждённое состояние</button><p>В состоянии показаны первые 100 воспоминаний. Остальной архив доступен по страницам и в полной выгрузке.</p><button id="firstMemories">Память: начало</button><button id="nextMemories">Следующие 100</button><a href="/api/memory-export" download>Скачать всю память</a><pre id="memoryPage"></pre><pre id="fullState"></pre></details>
 <details class="development-text"><summary>Исключительное вмешательство владельца</summary><p>Здесь можно удалить конкретное воспоминание или уничтожить ядро. Потребуется отдельное подтверждение точной операции.</p>
-<label>Операция <select id="overrideOperation"><option value="delete_memory">Удалить воспоминание</option><option value="replace_memory">Изменить воспоминание</option><option value="edit_model_weights">Изменить усвоенную модель</option><option value="edit_recovery_policy">Изменить правила восстановления</option><option value="destroy_kernel">Уничтожить ядро</option></select></label>
+<label>Операция <select id="overrideOperation"><option value="delete_memory">Удалить воспоминание</option><option value="replace_memory">Изменить воспоминание</option><option value="edit_model_weights">Изменить усвоенную модель</option><option value="edit_body">Изменить тело</option><option value="edit_neural_weights">Изменить веса сенсорной сети</option><option value="edit_recovery_policy">Изменить правила восстановления</option><option value="destroy_kernel">Уничтожить ядро</option></select></label>
 <label>ID воспоминания <input id="memoryTarget" type="number" min="1" value="1"></label>
 <label>Модель <select id="modelTarget"><option value="controller">Управление</option><option value="researcher-0">Исследователь 0</option><option value="researcher-1">Исследователь 1</option><option value="researcher-2">Исследователь 2</option></select></label>
 <label>Новое содержание в JSON (для редактирования) <textarea id="overrideReplacement" rows="5" aria-label="Новое защищённое содержание"></textarea></label>
