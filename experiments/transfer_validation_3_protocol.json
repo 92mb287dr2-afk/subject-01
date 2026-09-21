@@ -1,0 +1,12 @@
+{
+  "protocol": "prebirth-transfer-validation-3",
+  "seeds": [503, 607, 809],
+  "training_ticks": 400,
+  "transfer_ticks": 400,
+  "new_tasks": ["severe_damage_recovery", "unseen_motor_permutation"],
+  "max_mean_adaptive_to_fixed_error_ratio": 0.95,
+  "metric": "mean pre-update research prediction MSE during autonomous transfer",
+  "control": "same seeds/intervention schedule; fixed middle learning method; trajectories may diverge",
+  "motor_permutation": [1, 3, 0, 2],
+  "scope": "reserved before measurement of transition-by-transition channel selection with 5% loss hysteresis; validation-2 is development data; all six results retained, no posthoc exclusions"
+}

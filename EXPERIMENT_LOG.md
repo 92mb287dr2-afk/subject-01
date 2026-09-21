@@ -94,3 +94,32 @@ balances passed. Persistent log growth is approximately 8.66 GB/day at 20 Hz.
 CI also exposed an older observer race: live polling overwrote save confirmation
 within 150 ms. User action notices now remain visible for four seconds; connection
 and runtime errors still take priority. Added a browser assertion across multiple polls.
+
+## 2026-09-21 — Protected memory storage and independently validated method selection
+
+Schema 2 keeps protected memories in separate rows and pins their count/root in
+the checkpoint. Only changed records are written. A 26,000-record fixture exceeds
+the former 8 MiB full-state ceiling while the working checkpoint remains below
+100 KB. Schema 1 remains readable/writable without silent migration; explicit
+storage migration preserves identity, code/laws hashes and the journal. This is
+not a code-compatibility migration and does not bypass the runner's code pin.
+
+Journal chunks combine 256 batches using lossless cross-batch compression. Both
+archive insertion and removal of hot rows share the world transaction. Process
+termination tests cover both archive boundaries, migration boundaries, and new
+memory insertion; pagination, complete chains and corruption refusal are tested.
+Local suite: 48 passed, two opt-in browser tests remain for CI.
+
+The previous 32-transition method-selection interval could retain an obsolete
+method after a change. Selection now updates on each observed transition with a
+5% relative loss margin against switching between nearly tied estimates. The
+already-observed validation-2 set is development data: ratio 0.935440. Before
+measuring again, local commit 36a6118 fixed validation-3 seeds 503/607/809 and the
+new actuator permutation [1,3,0,2]. Its unchanged threshold is 0.95. All six results
+are retained; mean ratio 0.868842 passes. One damage scenario still regresses;
+most improvement comes from actuator permutation. No universal competence claim.
+
+Raw initial and post-storage replay reports retain their actual source hashes.
+CI now uses validation-3. Isolated probes still pass (body mean 0.793366, adaptive
+method mean 0.677649). Formal birth remains closed: bounded RAM access to the
+growing memory, archive budgets and final owner-reviewed readiness remain open.

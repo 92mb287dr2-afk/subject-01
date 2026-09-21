@@ -62,7 +62,7 @@ class CandidateAcceptance(unittest.TestCase):
         self.assertEqual(r.store.verify_journal(), r.metadata["journal_hash"])
 
     def test_C02_real_process_crashes_at_transaction_boundaries(self):
-        for phase in ("after_begin", "after_events", "after_checkpoint", "before_commit", "after_commit"):
+        for phase in ("after_begin", "after_memories", "after_events", "after_checkpoint", "before_commit", "after_commit"):
             with self.subTest(phase=phase):
                 folder = self.path / phase
                 r = self.runtime(folder)

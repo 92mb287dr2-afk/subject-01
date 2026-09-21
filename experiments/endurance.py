@@ -6,6 +6,7 @@ import statistics
 import tempfile
 import time
 import sys
+import zlib
 
 from subject01.candidate import CandidateRuntime
 from subject01.continuity import code_hash
@@ -37,6 +38,9 @@ def run(ticks):
                 predicted = initial + totals[resource + "_in"] - totals[resource + "_out"] - totals[resource + "_spill"]
                 assert abs(predicted - body[resource]) < 1e-8
             state_bytes = len(json.dumps(runtime.status()).encode())
+            checkpoint_bytes = len(zlib.decompress(runtime.store.db.execute(
+                "SELECT payload FROM checkpoint").fetchone()[0]))
+            archive_count = runtime.store.db.execute("SELECT count(*) FROM journal_archives").fetchone()[0]
         finally:
             runtime.stop()
         disk_bytes = sum(p.stat().st_size for p in Path(folder).iterdir())
@@ -45,7 +49,8 @@ def run(ticks):
                 p95_ms=sorted(durations)[int(len(durations) * .95)] * 1000,
                 max_ms=max(durations) * 1000, disk_bytes=disk_bytes,
                 projected_gb_per_24h=disk_bytes / ticks * 20 * 86400 / 1e9,
-                final_checkpoint_bytes=state_bytes, samples=samples,
+                final_checkpoint_bytes=checkpoint_bytes, full_state_export_bytes=state_bytes,
+                journal_archive_chunks=archive_count, samples=samples,
                 continuity_and_balance_passed=True,
                 real_time_budget_passed=statistics.mean(durations[-min(1000, ticks):]) < .05)
 

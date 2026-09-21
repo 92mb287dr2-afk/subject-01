@@ -99,11 +99,17 @@ class AdaptiveModel:
                                for row, current in zip(self.channel_losses, channel_errors)]
         self.samples += 1
         old = self.channel_methods[:]
-        if self.adaptive and self.samples % 32 == 0:
+        if self.adaptive:
             # Distinct numeric channels have different dynamics. A single global
             # winner lets an energy transient dictate every motor-related rate.
-            self.channel_methods = [min(range(3), key=lambda m: self.channel_losses[m][i])
-                                    for i in range(CHANNELS)]
+            # Reconsider after each observed transition. Waiting for a periodic
+            # boundary can keep an obsolete method for 31 more actions after a
+            # change. A relative margin prevents switching on nearly tied losses.
+            for i in range(CHANNELS):
+                best = min(range(3), key=lambda m: self.channel_losses[m][i])
+                current = self.channel_methods[i]
+                if self.channel_losses[best][i] < .95 * self.channel_losses[current][i]:
+                    self.channel_methods[i] = best
             self.selected = min(range(3), key=lambda i: self.losses[i])
         return observed_error, old != self.channel_methods
 
