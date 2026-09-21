@@ -65,6 +65,8 @@ class DirectoryLock:
 
 class ContinuityStore:
     FORMAT = 2
+    ARCHIVE_BATCHES = 32
+    HOT_BATCHES = 64
 
     def __init__(self, directory):
         self.data_dir = Path(directory).resolve()
@@ -247,7 +249,7 @@ class ContinuityStore:
             self.db.execute("INSERT INTO journal VALUES(?,?,?,?,?)",
                             (sequence, state["tick_index"], zlib.compress(raw_events), chain, previous))
             self.fault_hook("after_events")
-            if self.format == 2 and sequence % 256 == 0:
+            if self.format == 2 and sequence % self.ARCHIVE_BATCHES == 0:
                 self._archive_journal()
             self.db.execute("INSERT OR REPLACE INTO checkpoint VALUES(1,?,?,?)",
                             (state["tick_index"], zlib.compress(raw_state),
@@ -266,13 +268,13 @@ class ContinuityStore:
     def _archive_journal(self):
         """Lossless cross-batch compression, in the same transaction as the tick.
 
-        Always leave at least 256 hot batches, including the checkpoint boundary.
+        Keep the checkpoint boundary hot and limit work in a world transaction.
         SQLite can reuse the deleted pages; no external rename or unsafe unlink.
         """
-        if self.db.execute("SELECT count(*) FROM journal").fetchone()[0] < 512:
+        if self.db.execute("SELECT count(*) FROM journal").fetchone()[0] < self.HOT_BATCHES + self.ARCHIVE_BATCHES:
             return
         rows = self.db.execute("SELECT seq,payload,hash,previous_hash FROM journal "
-                               "ORDER BY seq LIMIT 256").fetchall()
+                               "ORDER BY seq LIMIT ?", (self.ARCHIVE_BATCHES,)).fetchall()
         packed = [[seq, json.loads(zlib.decompress(payload)), checksum, parent]
                   for seq, payload, checksum, parent in rows]
         raw = encode(packed)
@@ -284,9 +286,13 @@ class ContinuityStore:
 
     def _journal_rows(self, after=0):
         if self.format == 2:
+            # Older schema-2 writers used 256-batch blocks. This lower bound
+            # includes a containing old/new block while seeking by the primary
+            # key, instead of scanning the entire archive for each live cursor.
             for first, last, payload, checksum in self.db.execute(
                     "SELECT first_seq,last_seq,payload,hash FROM journal_archives "
-                    "WHERE last_seq>? ORDER BY first_seq", (after,)):
+                    "WHERE first_seq>=? AND last_seq>? ORDER BY first_seq",
+                    (max(1, after - 255), after)):
                 raw = zlib.decompress(payload)
                 if hashlib.sha256(raw).hexdigest() != checksum:
                     raise ValueError("Journal archive checksum mismatch")

@@ -13,6 +13,7 @@ from subject01.continuity import code_hash
 
 
 def run(ticks):
+    source_hash = code_hash()
     durations = []
     samples = []
     with tempfile.TemporaryDirectory(prefix="subject01-soak-") as folder:
@@ -44,7 +45,7 @@ def run(ticks):
         finally:
             runtime.stop()
         disk_bytes = sum(p.stat().st_size for p in Path(folder).iterdir())
-    return dict(code_hash=code_hash(), ticks=ticks, simulated_seconds=ticks * .05,
+    return dict(code_hash=source_hash, ticks=ticks, simulated_seconds=ticks * .05,
                 mean_ms=statistics.mean(durations) * 1000,
                 p95_ms=sorted(durations)[int(len(durations) * .95)] * 1000,
                 max_ms=max(durations) * 1000, disk_bytes=disk_bytes,

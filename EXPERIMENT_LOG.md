@@ -123,3 +123,9 @@ Raw initial and post-storage replay reports retain their actual source hashes.
 CI now uses validation-3. Isolated probes still pass (body mean 0.793366, adaptive
 method mean 0.677649). Formal birth remains closed: bounded RAM access to the
 growing memory, archive budgets and final owner-reviewed readiness remain open.
+
+The first schema-2 soak completed 10,000 ticks and ten restarts: mean 34.91 ms,
+last 1,000 mean 33.57 ms, 36.57 MB on disk, but p95 58.12 ms and max 1,330.78 ms.
+To limit work per transaction, archive blocks were reduced from 256 to 32 batches,
+with 64 hot batches retained. Indexed cursor seeks still read old 256-batch blocks;
+a compatibility test covers that boundary. The original soak report is retained.

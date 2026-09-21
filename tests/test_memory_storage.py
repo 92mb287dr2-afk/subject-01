@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import zlib
 
 from subject01.candidate import CandidateRuntime
@@ -146,9 +147,10 @@ store.migrate_memory_layout()
         store = ContinuityStore(self.path)
         try:
             before = store.journal(0, 500) + store.journal(500, 500)
+            archive_count = store.db.execute("SELECT count(*) FROM journal_archives").fetchone()[0]
             store.commit(state, [{"kind": "archive_trigger"}])
-            self.assertEqual(store.db.execute("SELECT count(*) FROM journal_archives").fetchone()[0], 1)
-            self.assertEqual(store.db.execute("SELECT count(*) FROM journal").fetchone()[0], 256)
+            self.assertEqual(store.db.execute("SELECT count(*) FROM journal_archives").fetchone()[0], archive_count + 1)
+            self.assertEqual(store.db.execute("SELECT count(*) FROM journal").fetchone()[0], 64)
             after = store.journal(0, 500) + store.journal(500, 500)
             self.assertEqual(after[:-1], before)
             self.assertEqual(store.journal(250, 20), after[250:270])
@@ -188,6 +190,23 @@ store.commit(state, [{"kind": "archive_trigger"}])
                         self.assertEqual(store.load(), before)
                 finally:
                     store.close()
+
+    def test_previous_large_archive_blocks_remain_readable_with_new_seek(self):
+        with patch.object(ContinuityStore, "ARCHIVE_BATCHES", 256), patch.object(ContinuityStore, "HOT_BATCHES", 256):
+            state = self.archive_fixture()
+            store = ContinuityStore(self.path)
+            try:
+                store.commit(state, [{"kind": "old_archive_trigger"}])
+                expected = store.journal(250, 20)
+            finally:
+                store.close()
+        store = ContinuityStore(self.path)
+        try:
+            self.assertEqual(store.journal(250, 20), expected)
+            self.assertEqual(store.journal(256, 1)[0]["seq"], 257)
+            self.assertEqual(store.verify_journal(), state["continuity"]["journal_hash"])
+        finally:
+            store.close()
 
 
 if __name__ == "__main__":
