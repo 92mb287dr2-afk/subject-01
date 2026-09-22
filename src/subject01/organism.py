@@ -48,7 +48,7 @@ class PredictiveNetwork:
         self.edges.append(edge)
         return edge
 
-    def step(self, sensors, tick):
+    def step(self, sensors, tick, allow_growth=True):
         if len(sensors) != 8 or not all(math.isfinite(v) for v in sensors):
             raise ValueError("exactly eight finite numeric sensor channels required")
         events = []
@@ -66,7 +66,7 @@ class PredictiveNetwork:
                                            before=before, weight=edge["weight"]))
             # Grow one missing prediction edge using the largest local error gradient.
             # This is an explicit learning rule, not unrestricted self-modification.
-            if self.steps % 40 == 0:
+            if allow_growth and self.steps % 40 == 0:
                 existing = {e["id"] for e in self.edges}
                 candidates = [(abs(errors[p] * self.previous_hidden[h]), h, p)
                               for h in range(12) for p in range(8)

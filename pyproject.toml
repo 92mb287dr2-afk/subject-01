@@ -24,4 +24,4 @@ testpaths = ["tests"]
 addopts = "-q"
 
 [tool.setuptools.package-data]
-subject01 = ["web/*.html", "web/*.css", "web/*.js"]
+subject01 = ["web/*.html", "web/*.css", "web/*.js", "release.json"]

@@ -4,10 +4,13 @@ const colors = {sensor:"#a8d5af",hidden:"#a9b1f1",motor:"#eda991",prediction:"#7
 const roles = {sensor:"Ощущение",hidden:"Внутренний",motor:"Движение",prediction:"Предсказание"};
 let state = null, token = "", cursor = -1, session = "", connected = false;
 let addMode = false, selected = null, eventTotal = 0, newTotal = 0;
-let pulses = [], eventsByType = {created:[],weight:[],signal:[],all:[]};
+let pulses = [], eventsByType = {created:[],weight:[],signal:[],development:[],all:[]};
+function currentBrain(){return state?.model_graphs?.[$("graphLayer").value] || state?.brain;}
 let locations = {}, camera = {zoom:1,x:0,y:0}, drag = null;
 let lastNetwork = 0, reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
-function notice(text, warn=false){$("notice").textContent=text;$("notice").classList.toggle("warn",warn);}
+let worldPaused=false;
+let noticeHeldUntil=0;
+function notice(text, warn=false, hold=0){$("notice").textContent=text;$("notice").classList.toggle("warn",warn);if(hold>0)noticeHeldUntil=performance.now()+hold;}
 function fmt(n){return Number(n).toFixed(3);}
 function fit(canvas){
   const r=canvas.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2);
@@ -54,20 +57,23 @@ function drawWorld(){
   c.fillStyle="#080f0a55";c.beginPath();c.ellipse(0,10,14*scale,6*scale,0,0,Math.PI*2);c.fill();
   c.strokeStyle="#c7e7a93d";c.setLineDash([3,5]);c.beginPath();c.arc(0,0,23*scale,0,Math.PI*2);c.stroke();c.setLineDash([]);
   c.scale(scale,scale);
-  // Humanoid glyph follows the point body; limbs are not a biomechanics claim.
+  // Four actual joint angles for the candidate; legacy uses a fixed glyph.
   c.strokeStyle="#d7e9bc";c.lineWidth=3;c.lineCap="round";
-  c.beginPath();c.moveTo(0,-4);c.lineTo(0,7);c.moveTo(-8,4);c.lineTo(0,-1);c.lineTo(8,4);
-  c.moveTo(-5,16);c.lineTo(0,7);c.lineTo(5,16);c.stroke();
+  c.beginPath();c.moveTo(0,-4);c.lineTo(0,7);
+  const joints=b.joints || [0,0,0,0];
+  joints.forEach((angle,i)=>{const side=i%2 ? 1 : -1,base=i<2?-1:7;
+    const a=side*(i<2?.95:.45)+angle*.5;
+    c.moveTo(0,base);c.lineTo(Math.sin(a)*11,base+Math.cos(a)*11);});c.stroke();
   c.fillStyle="#edf3d6";c.beginPath();c.arc(0,-10,4.5,0,Math.PI*2);c.fill();
   c.strokeStyle="#a8d58b";c.lineWidth=1;c.beginPath();c.moveTo(0,0);c.lineTo(b.vx*6,b.vy*6);c.stroke();c.restore();
 }
 function drawBrain(now){
   const {ctx:c,w,h}=fit($("brain"));c.clearRect(0,0,w,h);
   for(let x=18;x<w;x+=24)for(let y=18;y<h;y+=24){c.fillStyle="#6c937b16";c.fillRect(x,y,1,1);}
-  if(!state)return;layout(state.brain.nodes);
-  const edges=new Map(state.brain.edges.map(e=>[e.id,e]));
+  if(!state)return;const graph=currentBrain();layout(graph.nodes);
+  const edges=new Map(graph.edges.map(e=>[e.id,e]));
   const threshold=Number($("threshold").value);
-  for(const e of state.brain.edges){
+  for(const e of graph.edges){
     const a=point(e.source,w,h),b=point(e.target,w,h),fresh=e.created_tick>0 && state.tick-e.created_tick<40;
     const neighbor=!selected||e.source===selected||e.target===selected;
     c.globalAlpha=neighbor ? .65 : .10;c.strokeStyle=fresh?"#efd49a":e.weight<0?"#8b799e":"#678c78";
@@ -84,7 +90,7 @@ function drawBrain(now){
     c.beginPath();c.arc(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,1.2+Math.min(2,Math.abs(p.value)*2),0,Math.PI*2);c.fill();
   }
   c.globalAlpha=1;
-  for(const n of state.brain.nodes){
+  for(const n of graph.nodes){
     const p=point(n.id,w,h),a=Math.abs(n.value),r=3.5+a*3;
     c.fillStyle=colors[n.group];c.globalAlpha=.08+a*.12;c.beginPath();c.arc(p.x,p.y,r+7+a*7,0,Math.PI*2);c.fill();
     c.globalAlpha=.5+a*.5;c.beginPath();c.arc(p.x,p.y,r,0,Math.PI*2);c.fill();c.globalAlpha=1;
@@ -93,10 +99,10 @@ function drawBrain(now){
   }
 }
 function inspect(){
-  const n=state?.brain.nodes.find(n=>n.id===selected);
+  const n=currentBrain()?.nodes.find(n=>n.id===selected);
   if(!n){$("nodeInfo").textContent="Выбери нейрон на графе";return;}
-  const incoming=state.brain.edges.filter(e=>e.target===n.id).length;
-  const outgoing=state.brain.edges.filter(e=>e.source===n.id).length;
+  const incoming=currentBrain().edges.filter(e=>e.target===n.id).length;
+  const outgoing=currentBrain().edges.filter(e=>e.source===n.id).length;
   $("nodeInfo").textContent=roles[n.group]+" "+n.id+"\nАктивность: "+fmt(n.value)+"\nВходов: "+incoming+" · выходов: "+outgoing;
 }
 function renderEvents(){
@@ -106,31 +112,51 @@ function renderEvents(){
   const frag=document.createDocumentFragment();
   rows.forEach(e=>{
     const row=document.createElement("div");row.className="event "+e.kind;
-    const text=e.kind==="created"?"Новая связь":e.kind==="weight"?"Вес изменён":"Сигнал";
-    const detail=e.edge+"  "+(e.kind==="weight"?fmt(e.before)+" → "+fmt(e.weight):fmt(e.value??e.weight));
+    const text=e.kind==="created"?"Новая связь":e.kind==="weight"?"Вес изменён":e.kind==="signal"?"Сигнал":e.kind;
+    const detail=e.edge ? e.edge+"  "+(e.kind==="weight"?fmt(e.before)+" → "+fmt(e.weight):fmt(e.value??e.weight)) :
+      e.kind==="action_models" ? "Матрицы и вычисленные прогнозы сохранены в полном журнале" : JSON.stringify(e).slice(0,450);
     ["t "+e.tick,text,detail].forEach(t=>{const s=document.createElement("span");s.textContent=t;row.append(s);});frag.append(row);
   });$("events").append(frag);
 }
 function accept(data){
   const recovering = !connected && !!state;
-  if(session && session!==data.session){cursor=-1;pulses=[];eventsByType={created:[],weight:[],signal:[],all:[]};eventTotal=0;newTotal=0;notice("Сервер перезапущен. Восстановлено сохранённое состояние.",true);}
+  if(session && session!==data.session){cursor=-1;pulses=[];eventsByType={created:[],weight:[],signal:[],development:[],all:[]};eventTotal=0;newTotal=0;notice("Сервер перезапущен. Восстановлено сохранённое состояние.",true);}
   session=data.session;cursor=data.cursor;state=data.snapshot;lastNetwork=performance.now();connected=data.running&&!data.error;
+  worldPaused=!!data.paused;$("pauseWorld").hidden=!state.development;$("pauseWorld").textContent=worldPaused?"Продолжить":"Пауза";
   const now=performance.now();
   for(const batch of data.batches)for(const e of batch.events){
     eventTotal++;if(e.kind==="created")newTotal++;
-    if(e.kind==="signal")pulses.push({edge:e.edge,value:e.value,start:now});
-    eventsByType[e.kind].push(e);eventsByType.all.push(e);
+    if(e.kind==="signal"&&$("graphLayer").value==="brain")pulses.push({edge:e.edge,value:e.value,start:now});
+    const category=eventsByType[e.kind] ? e.kind : "development";
+    eventsByType[category].push(e);eventsByType.all.push(e);
+  }
+  if($("graphLayer").value!=="brain" && data.batches.length){
+    for(const e of currentBrain().edges)if(e.signal)pulses.push({edge:e.id,value:e.signal,start:now});
   }
   for(const key of Object.keys(eventsByType))eventsByType[key]=eventsByType[key].slice(-200);
   if(data.error)notice("Симуляция остановилась: "+data.error,true);
   else if(data.gap)notice("Пропущен участок онлайн-потока. Все записанные сигналы доступны в полном журнале.",true);
   else if(!data.running)notice("Мир остановлен. Отображается последнее состояние.",true);
+  else if(worldPaused&&performance.now()>noticeHeldUntil)notice("Техническая пауза: время мира не идёт.");
   else if(recovering)notice("Связь восстановлена. Снова показано актуальное состояние мира.");
-  else if(!$("notice").classList.contains("warn"))notice("Прямые данные сети · все ненулевые передачи журналируются · это не биологические спайки");
+  else if(!$("notice").classList.contains("warn")&&performance.now()>noticeHeldUntil)notice("Прямые данные сети · все ненулевые передачи журналируются · это не биологические спайки");
   const b=state.body;$("energy").textContent=Math.round(b.energy*100)+"%";$("energyBar").value=b.energy;
   $("speed").textContent=Math.hypot(b.vx,b.vy).toFixed(2);$("objects").textContent=state.objects.length;
-  $("tick").textContent=state.tick;$("edges").textContent=state.brain.edges.length;$("nodeCount").textContent=state.brain.nodes.length+" узла";
-  $("created").textContent=newTotal;$("error").textContent=state.brain.error===null?"—":state.brain.error.toFixed(4);
+  $("tick").textContent=state.tick;$("edges").textContent=currentBrain().edges.length;$("nodeCount").textContent=currentBrain().nodes.length+" узла";
+  $("created").textContent=newTotal;$("error").textContent=currentBrain().error===null?"—":currentBrain().error.toFixed(4);
+  $("developmentPanel").hidden=!state.development;
+  $("graphLayer").disabled=!state.model_graphs;
+  if(state.development){const d=state.development;
+    const living=state.continuity.status==="LIVING";
+    $("lifeStatus").textContent=living?"SUBJECT-01":"PRE-BIRTH";
+    $("modeLabel").textContent=living?"единственная зарегистрированная жизнь":"тестовая среда · первое рождение отдельно";
+    $("bodyMode").textContent=d.mode==="RECOVERING"?"Восстановление тела":"Тело активно";
+    $("origin").textContent=state.continuity.origin_id.slice(0,8);
+    $("health").textContent=Math.round(d.health*100)+"%";$("material").textContent=fmt(d.material);
+    $("strength").textContent=fmt(d.strength);$("memories").textContent=d.memories;
+    $("hypothesis").textContent=d.hypothesis ? "Гипотеза №"+d.hypothesis.id+" · "+d.hypothesis.phase+" · прогноз и реальная проба разделены" : d.repair ? "Компенсация изменения: время и ресурсы расходуются" : "Накопление опыта для следующей гипотезы";
+    $("modelErrors").textContent="Ошибка управления: "+fmt(d.controller_error)+" · исследователя: "+fmt(d.researcher_error)+" · методы по каналам: "+d.channel_methods.join(", ");
+  }
   $("eventCount").textContent=eventTotal.toLocaleString("ru")+" полученных событий";
   $("clock").textContent=Math.floor(state.time/60).toString().padStart(2,"0")+":"+Math.floor(state.time%60).toString().padStart(2,"0");
   inspect();renderEvents();
@@ -152,11 +178,29 @@ $("add").onclick=()=>{addMode=!addMode;$("add").classList.toggle("active",addMod
 $("world").onclick=async e=>{
   if(!addMode||!state)return;
   const r=$("world").getBoundingClientRect(),x=(e.clientX-r.left)/r.width*state.width,y=(e.clientY-r.top)/r.height*state.height;
-  try{const result=await post("/api/command",{kind:"spawn_object",payload:{x,y,kind:"stone"}});notice("Объект поставлен в очередь · вмешательство №"+result.event_id);}
+  try{const result=await post("/api/command",{request_id:crypto.randomUUID(),kind:"spawn_object",payload:{x,y,kind:"stone"}});notice("Объект поставлен в очередь · вмешательство №"+result.event_id,false,4000);}
   catch(e){notice("Не удалось добавить объект: "+e.message,true);}
 };
-$("save").onclick=async()=>{const b=$("save");b.disabled=true;try{await post("/api/save",{});notice("Состояние мира, тела и сети сохранено.");}catch(e){notice("Ошибка сохранения: "+e.message,true);}finally{b.disabled=false;}};
+$("save").onclick=async()=>{const b=$("save");b.disabled=true;try{await post("/api/save",{});notice("Состояние мира, тела и сети сохранено.",false,4000);}catch(e){notice("Ошибка сохранения: "+e.message,true);}finally{b.disabled=false;}};
 $("filter").onchange=renderEvents;
+$("pauseWorld").onclick=async()=>{try{await post(worldPaused?"/api/resume":"/api/pause",{});}catch(e){notice(e.message,true);}};
+$("graphLayer").onchange=()=>{locations={};pulses=[];selected=null;inspect();$("graphNote").textContent=$("graphLayer").value==="brain"?"Передачи сенсорной сети":$("graphLayer").value==="researcher"?"Составной прогноз исследователя · отдельный темп обучения каждого канала":"Последний вычисленный прогноз · импульсы = вход × вес";};
+$("inspectState").onclick=async()=>{try{const r=await fetch("/api/state");if(!r.ok)throw Error(r.status);$("fullState").textContent=JSON.stringify(await r.json(),null,2);}catch(e){notice(e.message,true);}};
+let memoryCursor=0;
+async function showMemories(after){try{const r=await fetch("/api/memories?after="+after);if(!r.ok)throw Error(r.status);const data=await r.json();memoryCursor=data.cursor;$("memoryPage").textContent=JSON.stringify(data,null,2);$("nextMemories").disabled=data.records.length<100;}catch(e){notice(e.message,true);}}
+$("firstMemories").onclick=()=>showMemories(0);
+$("nextMemories").onclick=()=>showMemories(memoryCursor);
+let overrideGrant=null;
+$("previewOverride").onclick=async()=>{try{const operation=$("overrideOperation").value;
+  const target=operation==="edit_body"?"body":operation==="edit_neural_weights"?"brain":operation.includes("kernel")||operation==="edit_recovery_policy"?"kernel":operation==="edit_model_weights"?$("modelTarget").value:Number($("memoryTarget").value);
+  const replacement=operation.startsWith("edit_")||operation==="replace_memory"?JSON.parse($("overrideReplacement").value):null;
+  overrideGrant=await post("/api/override/preview",{operation,target,replacement});$("overridePreview").hidden=false;
+  $("overrideConfirmation").value="";$("overrideConsequence").textContent=overrideGrant.consequence+" Новое содержание: "+JSON.stringify(overrideGrant.replacement)+". В течение 60 секунд введите: "+overrideGrant.required_confirmation;
+}catch(e){notice(e.message,true);}};
+$("confirmOverride").onclick=async()=>{if(!overrideGrant)return;try{
+  await post("/api/override/confirm",{token:overrideGrant.token,confirmation:$("overrideConfirmation").value});
+  notice("Исключительное вмешательство записано в аудит.",false,4000);
+}catch(e){notice(e.message,true);}finally{overrideGrant=null;$("overridePreview").hidden=true;}};
 $("threshold").oninput=()=>$("thresholdValue").textContent=Number($("threshold").value).toFixed(2);
 $("expand").onclick=()=>{const on=$("brainPanel").classList.toggle("expanded");$("expand").textContent=on?"↙ Свернуть":"↗ Развернуть";};
 function zoom(factor){camera.zoom=Math.min(4,Math.max(.4,camera.zoom*factor));}
@@ -178,7 +222,7 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape"){$("brainPanel").cla
 let lastDraw=0;
 function draw(now){
   if(now-lastDraw>=32){lastDraw=now;drawWorld();drawBrain(now);
-    const live=connected&&now-lastNetwork<3000;$("lamp").classList.toggle("online",live);$("connection").textContent=live?"МИР АКТИВЕН":"НЕТ LIVE-СВЯЗИ";
+    const live=connected&&now-lastNetwork<3000;$("lamp").classList.toggle("online",live&&!worldPaused);$("connection").textContent=live?(worldPaused?"МИР НА ПАУЗЕ":"МИР АКТИВЕН"):"НЕТ LIVE-СВЯЗИ";
   }requestAnimationFrame(draw);
 }
 poll();requestAnimationFrame(draw);

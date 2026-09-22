@@ -1,0 +1,23 @@
+{
+  "code_hash": "fa655308b1359fbc30cec7860dc2bca30ff2d9ccfc406a033127811f4cea12a8",
+  "scope": "Python allocations during restore; native SQLite caches are separately limited; fixture creation excluded",
+  "results": [
+    {
+      "records": 26000,
+      "restore_seconds": 7.668464010000207,
+      "restore_python_peak_bytes": 257366,
+      "mean_step_ms": 28.829428419999203,
+      "cached_records": 128,
+      "passed": true
+    },
+    {
+      "records": 104000,
+      "restore_seconds": 30.62244273200008,
+      "restore_python_peak_bytes": 257062,
+      "mean_step_ms": 24.60848070000793,
+      "cached_records": 128,
+      "passed": true
+    }
+  ],
+  "passed": true
+}

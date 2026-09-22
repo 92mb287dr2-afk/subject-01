@@ -1,0 +1,12 @@
+{
+  "protocol": "prebirth-organism-transfer-1",
+  "seeds": [23, 41, 97],
+  "training_ticks": 400,
+  "transfer_ticks": 400,
+  "new_tasks": ["severe_damage_recovery", "unseen_motor_permutation"],
+  "max_mean_adaptive_to_fixed_error_ratio": 0.95,
+  "metric": "mean pre-update research prediction MSE in autonomous full-core trajectories during transfer",
+  "control": "same starting seed and intervention schedule; fixed middle learning method; trajectories may diverge",
+  "motor_permutation": [2, 0, 3, 1],
+  "scope": "bounded full-core transfer; not evidence for general intelligence or open-ended evolution"
+}

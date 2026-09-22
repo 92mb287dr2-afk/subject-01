@@ -4,11 +4,13 @@ from __future__ import annotations
 import argparse
 from collections import deque
 from copy import deepcopy
+from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 import json
 from pathlib import Path
 import secrets
+import sqlite3
 import threading
 import uuid
 from urllib.parse import parse_qs, urlparse
@@ -47,7 +49,8 @@ class ObserverRuntime(SimulationRuntime):
         return dict(tick=core.tick_index, time=core.simulation_time,
                     width=core.config.width, height=core.config.height,
                     body=deepcopy(core.body), brain=core.brain.state(),
-                    objects=core.state()["objects"], events=deepcopy(core.last_neural_events))
+                    objects=[asdict(core.objects[key]) for key in sorted(core.objects)],
+                    events=deepcopy(core.last_neural_events))
 
     def _after_step(self, applied):
         frame = self._frame()
@@ -117,6 +120,29 @@ class ObserverHandler(BaseHTTPRequestHandler):
                 self._send(200, self.server.runtime.telemetry(after))
             elif parsed.path == "/api/session":
                 self._send(200, {"token": self.server.token})
+            elif parsed.path == "/api/state":
+                runtime = self.server.runtime
+                self._send(200, runtime.status(memory_limit=100) if hasattr(runtime, "memory_page") else runtime.status())
+            elif parsed.path == "/api/memories" and hasattr(self.server.runtime, "memory_page"):
+                after = int(parse_qs(parsed.query).get("after", ["0"])[0])
+                self._send(200, self.server.runtime.memory_page(after))
+            elif parsed.path == "/api/memory-export" and hasattr(self.server.runtime.store, "memory_export"):
+                with self.server.runtime.store.memory_export() as (manifest, records):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/x-ndjson")
+                    self.send_header("Content-Disposition", 'attachment; filename="protected-memories.jsonl"')
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.wfile.write(json.dumps(manifest, allow_nan=False).encode() + b"\n")
+                    for record in records:
+                        self.wfile.write(json.dumps(record, allow_nan=False).encode() + b"\n")
+                    self.close_connection = True
+            elif parsed.path == "/api/journal" and hasattr(self.server.runtime.store, "journal"):
+                after = int(parse_qs(parsed.query).get("after", ["0"])[0])
+                with self.server.runtime._lock:
+                    batches = self.server.runtime.store.journal(after)
+                self._send(200, dict(batches=batches, cursor=batches[-1]["seq"] if batches else after))
             elif parsed.path == "/api/neural-log":
                 self._download_log()
             elif parsed.path in ("/", "/app.js", "/style.css"):
@@ -131,6 +157,29 @@ class ObserverHandler(BaseHTTPRequestHandler):
             self._send(400, {"error": str(exc)})
 
     def _download_log(self):
+        runtime = self.server.runtime
+        if hasattr(runtime.store, "journal"):
+            with runtime._lock:
+                last = runtime.store.db.execute("SELECT max(seq) FROM journal").fetchone()[0] or 0
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.send_header("Content-Disposition", 'attachment; filename="committed-events.jsonl"')
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            after = 0
+            while after < last:
+                with runtime._lock:
+                    batches = runtime.store.journal(after)
+                if not batches:
+                    break
+                for batch in batches:
+                    if batch["seq"] > last:
+                        break
+                    self.wfile.write(json.dumps(batch, allow_nan=False).encode() + b"\n")
+                    after = batch["seq"]
+            self.close_connection = True
+            return
         path = self.server.runtime.neural_path
         if not path.exists():
             self._send(200, b"", "application/x-ndjson")
@@ -176,34 +225,61 @@ class ObserverHandler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if length < 1 or length > 4096:
-                raise ValueError("body must be 1..4096 bytes")
+            limit = 32768 if self.path == "/api/override/preview" else 4096
+            if length < 1 or length > limit:
+                raise ValueError(f"body must be 1..{limit} bytes")
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError("JSON object required")
             if self.path == "/api/command":
-                result = self.server.runtime.submit(data["kind"], data["payload"])
+                if hasattr(self.server.runtime, "metadata"):
+                    result = self.server.runtime.submit(data["kind"], data["payload"], data.get("request_id"))
+                else:
+                    result = self.server.runtime.submit(data["kind"], data["payload"])
                 self._send(202, result)
+            elif self.path == "/api/override/preview" and hasattr(self.server.runtime, "preview_override"):
+                self._send(200, self.server.runtime.preview_override(data["operation"], data["target"], data.get("replacement")))
+            elif self.path == "/api/override/confirm" and hasattr(self.server.runtime, "confirm_override"):
+                self._send(200, self.server.runtime.confirm_override(data["token"], data["confirmation"]))
             elif self.path == "/api/save":
                 self.server.runtime.save_snapshot()
                 self._send(200, {"saved": True})
+            elif self.path in ("/api/pause", "/api/resume") and hasattr(self.server.runtime, "set_paused"):
+                self._send(200, self.server.runtime.set_paused(self.path == "/api/pause"))
             else:
                 self._send(404, {"error": "not found"})
         except (ValueError, KeyError, TypeError, OverflowError) as exc:
             self._send(400, {"error": str(exc)})
+        except (OSError, RuntimeError, sqlite3.Error) as exc:
+            self._send(503, {"error": str(exc)})
 
 
 def main():
     parser = argparse.ArgumentParser(description="Subject-01 live observer")
-    parser.add_argument("--data-dir", default="./data-observer")
+    parser.add_argument("--data-dir")
+    mode_args = parser.add_mutually_exclusive_group()
+    mode_args.add_argument("--candidate", action="store_true", help="Run the durable pre-birth candidate")
+    mode_args.add_argument("--subject", action="store_true", help="Resume the one registered official life")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
-    runtime = ObserverRuntime.open(args.data_dir, SimulationConfig())
-    server = ObserverServer(runtime, args.port)
-    runtime.start()
+    if args.subject:
+        from .birth import SubjectRuntime
+        runtime = SubjectRuntime.open(args.data_dir)
+    elif args.candidate:
+        from .candidate import CandidateRuntime
+        runtime = CandidateRuntime.open(args.data_dir or "./data-candidate", SimulationConfig())
+    else:
+        runtime = ObserverRuntime.open(args.data_dir or "./data-observer", SimulationConfig())
+    try:
+        server = ObserverServer(runtime, args.port)
+        runtime.start()
+    except BaseException:
+        runtime.stop()
+        raise
     url = f"http://127.0.0.1:{server.server_port}"
-    print(f"Observer: {url}\nDiagnostic model, PRE-BIRTH. Ctrl+C saves and stops.", flush=True)
+    mode = "Subject-01 · LIVING" if args.subject else "PRE-BIRTH · " + ("Durable candidate" if args.candidate else "Diagnostic model")
+    print(f"Observer: {url}\n{mode}. Ctrl+C saves and stops.", flush=True)
     if not args.no_browser:
         webbrowser.open(url)
     try:

@@ -1,0 +1,57 @@
+{
+  "ready": true,
+  "kind": "research-release-ready-for-owner-birth-decision",
+  "code_hash": "fa655308b1359fbc30cec7860dc2bca30ff2d9ccfc406a033127811f4cea12a8",
+  "laws_hash": "cdf430de303f83102b71f6a2ce7e80c59a74dbc341ab9d12b8e031e35b567223",
+  "contract_sha256": "cab9a27d063757235507c966a0af6bf3bd4eb4a51289680860589a58ec0cfa69",
+  "gates": {
+    "C01": true,
+    "C02": true,
+    "C03": true,
+    "C04": true,
+    "C05": true,
+    "C06": true,
+    "C07": true,
+    "C08": true,
+    "C09": true,
+    "C10": true,
+    "C11": true,
+    "C12": true,
+    "C13": true,
+    "C14": true,
+    "C15": true,
+    "C16": true,
+    "C17": true,
+    "C18": true,
+    "C19": true,
+    "C20": true,
+    "C21": true
+  },
+  "birth_requires_owner_confirmation": true,
+  "formal_birth_performed": false,
+  "evidence_url": "https://github.com/92mb287dr2-afk/subject-01/actions/runs/35626913540",
+  "tested_source_commit": "7619f2827380fcdad0e9f9db66f5003de5f304f8",
+  "engineering_tests_passed": 61,
+  "browser_scenarios_passed": 2,
+  "platforms": [
+    "Windows",
+    "Linux"
+  ],
+  "report_files": {
+    "endurance-release": "3da0c078e4d30e173cdadf3acd78d411b178803b8c9ff14391040d55a2f9201d",
+    "memory-budget-release": "6351ff211c66ee463c17daf2cd09accb1df8a17e8470f8cc96c2d8d3a4587663",
+    "transfer-release": "79719ecd64c1b4941dcae0a35bd5e4a75b82ef9f615cd2eef5deaef00950c63c"
+  },
+  "limits": {
+    "memory_cache_records": 128,
+    "sqlite_main_cache_mib": 4,
+    "sqlite_temp_cache_mib": 2,
+    "free_disk_pause_mib": 64,
+    "projected_journal_gb_per_day": 6.183950745600001,
+    "mean_step_ms": 33.24466964730088,
+    "p95_step_ms": 69.28060400014147,
+    "max_step_ms": 381.853971000055,
+    "hard_realtime": false
+  },
+  "scope": "Abstract planar artificial-life research model; consciousness, language understanding and human walking are not claimed."
+}
